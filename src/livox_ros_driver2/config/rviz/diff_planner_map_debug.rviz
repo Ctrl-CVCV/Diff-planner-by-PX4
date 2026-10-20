@@ -1,0 +1,163 @@
+# Passive single-drone map inspection. No robot mesh or goal-publishing tools.
+Panels:
+- Class: rviz/Displays
+  Name: Displays
+  Property Tree Widget:
+    Expanded:
+    - /Global Options1
+    Splitter Ratio: 0.55
+Preferences:
+  PromptSaveOnExit: true
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Alpha: 1
+    Class: rviz/Axes
+    Enabled: true
+    Length: 0.5
+    Name: Axes
+    Radius: 0.01
+    Reference Frame: <Fixed Frame>
+    Show Trail: false
+    Value: true
+  - Alpha: 0.5
+    Cell Size: 1
+    Class: rviz/Grid
+    Color: 160; 160; 164
+    Enabled: true
+    Line Style:
+      Line Width: 0.029999999329447746
+      Value: Lines
+    Name: Grid
+    Normal Cell Count: 0
+    Offset:
+      X: 0
+      Y: 0
+      Z: 0
+    Plane: XY
+    Plane Cell Count: 20
+    Reference Frame: <Fixed Frame>
+    Value: true
+  - Alpha: 1.0
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 2.075000047683716
+      Min Value: -0.02500000037252903
+      Value: true
+    Axis: Z
+    Channel Name: intensity
+    Class: rviz/PointCloud2
+    Color: 220; 220; 220
+    Color Transformer: FlatColor
+    Decay Time: 0
+    Enabled: true
+    Invert Rainbow: false
+    Max Color: 255; 255; 255
+    Min Color: 0; 0; 0
+    Name: 01 FAST-LIO registered cloud
+    Position Transformer: XYZ
+    Queue Size: 2
+    Selectable: true
+    Size (Pixels): 3
+    Size (m): 0.02
+    Style: Points
+    Topic: /cloud_registered
+    Unreliable: false
+    Use Fixed Frame: true
+    Use rainbow: true
+    Value: true
+  - Alpha: 0.8
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 2.075000047683716
+      Min Value: -0.02500000037252903
+      Value: true
+    Axis: Z
+    Channel Name: intensity
+    Class: rviz/PointCloud2
+    Color: 255; 80; 50
+    Color Transformer: FlatColor
+    Decay Time: 0
+    Enabled: true
+    Invert Rainbow: false
+    Max Color: 255; 255; 255
+    Min Color: 0; 0; 0
+    Name: 02 Raw occupied voxels
+    Position Transformer: XYZ
+    Queue Size: 2
+    Selectable: true
+    Size (Pixels): 3
+    Size (m): 0.18
+    Style: Boxes
+    Topic: /drone_0_diff_planner_node/grid_map/occupancy
+    Unreliable: false
+    Use Fixed Frame: true
+    Use rainbow: true
+    Value: true
+  - Alpha: 0.25
+    Autocompute Intensity Bounds: true
+    Autocompute Value Bounds:
+      Max Value: 2.075000047683716
+      Min Value: -0.02500000037252903
+      Value: true
+    Axis: Z
+    Channel Name: intensity
+    Class: rviz/PointCloud2
+    Color: 255; 190; 40
+    Color Transformer: FlatColor
+    Decay Time: 0
+    Enabled: false
+    Invert Rainbow: false
+    Max Color: 255; 255; 255
+    Min Color: 0; 0; 0
+    Name: 03 Inflated occupied voxels (enable to compare)
+    Position Transformer: XYZ
+    Queue Size: 2
+    Selectable: true
+    Size (Pixels): 3
+    Size (m): 0.18
+    Style: Boxes
+    Topic: /drone_0_diff_planner_node/grid_map/occupancy_inflate
+    Unreliable: false
+    Use Fixed Frame: true
+    Use rainbow: true
+    Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 35; 35; 40
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+  - Class: rviz/Interact
+    Hide Inactive Objects: true
+  - Class: rviz/MoveCamera
+  - Class: rviz/Select
+  - Class: rviz/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz/ThirdPersonFollower
+      Distance: 8
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Field of View: 0.7853981852531433
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.5
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.5
+      Target Frame: <Fixed Frame>
+      Yaw: 0.7
+    Saved: []

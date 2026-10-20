@@ -1,0 +1,87 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: world
+    Frame Rate: 20
+  Displays:
+    - Class: rviz/Grid
+      Name: World Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+    - Class: rviz/PointCloud2
+      Name: Registered Cloud
+      Enabled: true
+      Topic: /cloud_registered
+      Queue Size: 1
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 0.5
+      Color Transformer: FlatColor
+      Color: 200; 200; 200
+    - Class: rviz/PointCloud2
+      Name: Occupancy Raw
+      Enabled: true
+      Topic: /drone_0_diff_planner_node/grid_map/occupancy
+      Queue Size: 1
+      Style: Boxes
+      Size (m): 0.1
+      Alpha: 1
+      Color Transformer: FlatColor
+      Color: 255; 150; 40
+    - Class: rviz/PointCloud2
+      Name: Occupancy Inflated
+      Enabled: true
+      Topic: /drone_0_diff_planner_node/grid_map/occupancy_inflate
+      Queue Size: 1
+      Style: Boxes
+      Size (m): 0.125
+      Alpha: 0.2
+      Color Transformer: FlatColor
+      Color: 60; 170; 255
+    - Class: rviz/Odometry
+      Name: EKF Odometry
+      Enabled: true
+      Topic: /ekf/ekf_odom
+      Keep: 1
+      Position Tolerance: 0
+      Angle Tolerance: 0
+    - Class: rviz/Marker
+      Name: Global Reference
+      Enabled: true
+      Marker Topic: /drone_0_diff_planner_node/global_list
+      Queue Size: 10
+    - Class: rviz/Marker
+      Name: Optimized Trajectory
+      Enabled: true
+      Marker Topic: /drone_0_diff_planner_node/optimal_list
+      Queue Size: 10
+    - Class: rviz/Marker
+      Name: A Star Search
+      Enabled: false
+      Marker Topic: /drone_0_diff_planner_node/a_star_list
+      Queue Size: 10
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/Measure
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 8
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.8
+      Pitch: 0.5
+      Yaw: 0.8
+Window Geometry:
+  Width: 1280
+  Height: 800

@@ -1,0 +1,39 @@
+common:
+    lid_topic:  "/livox/lidar"
+    imu_topic:  "/mavros/imu/data_raw"
+
+preprocess:
+    lidar_type: 1
+    feature_extract_en: false
+    scan_line: 4
+    blind: 0.5
+
+initialization:
+    # MID360s input is 10 Hz. 5 subframes gives the recommended 50 Hz odometry rate.
+    cut_frame_num: 5
+    orig_odom_freq: 10
+    # PX4/MAVROS publishes acceleration in m/s^2.
+    mean_acc_norm: 9.805
+    online_refine_time: 20
+    data_accum_length: 500
+    Rot_LI_cov: [0.00005, 0.00005, 0.00005]
+    Trans_LI_cov: [0.00001, 0.00001, 0.00001]
+
+mapping:
+    filter_size_surf: 0.10
+    filter_size_map: 0.20
+    gyr_cov: 0.1
+    acc_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    det_range: 100.0
+
+publish:
+    path_en: true
+    scan_publish_en: true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: false
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1

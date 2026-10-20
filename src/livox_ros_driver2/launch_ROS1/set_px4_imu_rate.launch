@@ -1,0 +1,18 @@
+<launch>
+  <!-- Requested rate only. The delivered rate may be lower because of PX4/link limits. -->
+  <arg name="rate_hz" default="500.0" />
+  <arg name="apply_delay" default="2.0" />
+  <arg name="refresh_period" default="30.0" />
+
+  <node pkg="livox_ros_driver2"
+        type="set_px4_mavlink_imu_rate.py"
+        name="px4_imu_rate_keeper"
+        output="screen"
+        respawn="true"
+        respawn_delay="2.0">
+    <param name="rate_hz" value="$(arg rate_hz)" />
+    <param name="apply_delay" value="$(arg apply_delay)" />
+    <param name="refresh_period" value="$(arg refresh_period)" />
+    <rosparam param="message_ids">[31, 105]</rosparam>
+  </node>
+</launch>
