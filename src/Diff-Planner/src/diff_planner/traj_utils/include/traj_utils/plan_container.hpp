@@ -69,7 +69,10 @@ namespace diff_planner
 
       local_traj.drone_id = -1;
       local_traj.duration = 0.0;
-      local_traj.traj_id = 0;
+      // traj_id must stay monotonic across goals: consumers (traj_server ->
+      // mission script) use "new traj_id > previous" to reject stale commands.
+      // Resetting it here made every new goal restart at 1, which looks like a
+      // stale trajectory to those consumers.
     }
 
     void setLocalTraj(const poly_traj::Trajectory &trajectory, const PtsChk_t &pts_to_chk, const double &world_time, const int drone_id = -1)

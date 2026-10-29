@@ -18,6 +18,7 @@ quadrotor_msgs::PositionCommand cmd;
 #define TURN_YAW_TO_CENTER_AT_END 0
 
 bool receive_traj_ = false;
+bool hold_at_end_ = false;
 boost::shared_ptr<poly_traj::Trajectory> traj_;
 double traj_duration_;
 ros::Time start_time_;
@@ -202,6 +203,7 @@ void cmdCallback(const ros::TimerEvent &e)
 
     receive_traj_ = false;
     publish_cmd(last_pos_, Vector3d::Zero(), Vector3d::Zero(), Vector3d::Zero(), last_yaw_, 0);
+    return;
   }
 
   double t_cur = (time_now - start_time_).toSec();
@@ -241,6 +243,12 @@ void cmdCallback(const ros::TimerEvent &e)
 #if FLIP_YAW_AT_END or TURN_YAW_TO_CENTER_AT_END
     finished = false;
 #endif
+  }
+
+  else if (t_cur >= traj_duration_ && hold_at_end_)
+  {
+    publish_cmd(traj_->getPos(traj_duration_), Vector3d::Zero(), Vector3d::Zero(),
+                Vector3d::Zero(), last_yaw_, 0.0);
   }
 
 #if FLIP_YAW_AT_END
@@ -346,6 +354,7 @@ int main(int argc, char **argv)
   ros::Timer cmd_timer = nh.createTimer(ros::Duration(0.01), cmdCallback);
 
   nh.param("traj_server/time_forward", time_forward_, -1.0);
+  nh.param("traj_server/hold_at_end", hold_at_end_, false);
   nh.param("traj_server/yaw_dot_max", YAW_DOT_MAX_PER_SEC, YAW_DOT_MAX_PER_SEC);
   nh.param("traj_server/yaw_dot_dot_max", YAW_DOT_DOT_MAX_PER_SEC, YAW_DOT_DOT_MAX_PER_SEC);
   last_yaw_ = 0.0;
