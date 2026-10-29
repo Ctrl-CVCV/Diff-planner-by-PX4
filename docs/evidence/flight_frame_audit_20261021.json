@@ -1,0 +1,196 @@
+{
+  "bags": [
+    "/home/nvidia/flight_logs/20261020_211622/takeoff.bag"
+  ],
+  "inventory": {
+    "/debugPx4ctrl": {
+      "messages": 136278,
+      "type": "quadrotor_msgs/Px4ctrlDebug"
+    },
+    "/ekf/ekf_odom": {
+      "messages": 117328,
+      "type": "nav_msgs/Odometry"
+    },
+    "/goal": {
+      "messages": 1,
+      "type": "geometry_msgs/PoseStamped"
+    },
+    "/mavros/battery": {
+      "messages": 344,
+      "type": "sensor_msgs/BatteryState"
+    },
+    "/mavros/extended_state": {
+      "messages": 3441,
+      "type": "mavros_msgs/ExtendedState"
+    },
+    "/mavros/imu/data": {
+      "messages": 117328,
+      "type": "sensor_msgs/Imu"
+    },
+    "/mavros/rc/in": {
+      "messages": 13764,
+      "type": "mavros_msgs/RCIn"
+    },
+    "/mavros/setpoint_raw/attitude": {
+      "messages": 136277,
+      "type": "mavros_msgs/AttitudeTarget"
+    },
+    "/mavros/state": {
+      "messages": 689,
+      "type": "mavros_msgs/State"
+    },
+    "/px4ctrl/state": {
+      "messages": 136273,
+      "type": "quadrotor_msgs/Px4ctrlState"
+    },
+    "/px4ctrl/takeoff_land": {
+      "messages": 1,
+      "type": "quadrotor_msgs/TakeoffLand"
+    },
+    "/rosout": {
+      "messages": 579,
+      "type": "rosgraph_msgs/Log"
+    },
+    "/setpoints_cmd": {
+      "messages": 200,
+      "type": "quadrotor_msgs/PositionCommand"
+    }
+  },
+  "frames": {
+    "/mavros/imu/data": {
+      "base_link": 117328
+    },
+    "/ekf/ekf_odom": {
+      "world": 117328
+    },
+    "/goal": {
+      "world": 1
+    },
+    "/setpoints_cmd": {
+      "world": 200
+    },
+    "/Odometry": {}
+  },
+  "child_frames": {
+    "/ekf/ekf_odom": {
+      "": 117328
+    }
+  },
+  "receipt_minus_header_s": {
+    "/mavros/imu/data": {
+      "count": 117328,
+      "median": 0.004206418991088867,
+      "p95": 0.009793758392333984,
+      "max": 0.06862401962280273
+    },
+    "/ekf/ekf_odom": {
+      "count": 117328,
+      "median": 0.019879817962646484,
+      "p95": 0.04298257827758789,
+      "max": 0.0973978042602539
+    },
+    "/goal": {
+      "count": 1,
+      "median": 0.0011382102966308594,
+      "p95": 0.0011382102966308594,
+      "max": 0.0011382102966308594
+    },
+    "/setpoints_cmd": {
+      "count": 200,
+      "median": 0.0003185272216796875,
+      "p95": 0.0029294490814208984,
+      "max": 0.008078336715698242
+    }
+  },
+  "zero_header_stamps": {},
+  "cloud_point_counts": {},
+  "tf_edges": {},
+  "goals": [
+    {
+      "stamp": 1792503958.5716784,
+      "frame": "world",
+      "xyz": [
+        -0.5793255498159231,
+        1.044880645667635,
+        0.8565671228472304
+      ]
+    }
+  ],
+  "lio_vs_ekf_numeric_only": {
+    "reference_samples": 0,
+    "paired_samples": 0,
+    "unpaired_samples": 0,
+    "max_pair_dt_s": 0.03,
+    "position_error_m": {
+      "count": 0,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "orientation_error_deg": {
+      "count": 0,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "pair_dt_s": {
+      "count": 0,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "median_estimate_minus_reference_xyz_m": [
+      null,
+      null,
+      null
+    ]
+  },
+  "recorded_lio_ekf_tf_paths": [],
+  "registered_cloud_transform": {
+    "paired_frames": 0,
+    "sampled_point_error_m": {
+      "count": 0,
+      "median": null,
+      "p95": null,
+      "max": null
+    },
+    "note": "抽样检验 cloud_world = R_odom * cloud_body + p_odom；不证明物理外参标定正确。"
+  },
+  "ekf_vs_fcu_attitude_alignment": {
+    "paired_samples": 117328,
+    "first_imu_times_inverse_ekf_wxyz": [
+      0.016409053578088268,
+      -0.006659520941094875,
+      0.014610522626244795,
+      -0.9997364337446615
+    ],
+    "absolute_attitude_difference_deg": {
+      "count": 117328,
+      "median": 178.01392049696418,
+      "p95": 179.6403158655736,
+      "max": 179.9970329491926
+    },
+    "alignment_change_from_first_deg": {
+      "count": 117328,
+      "median": 0.204734509648815,
+      "p95": 1.7772736239661844,
+      "max": 87.44036612689361
+    },
+    "note": "FCU 与 LIO 的世界航向可以不同；绝对角差非零不直接表示错误。"
+  },
+  "warnings": [
+    "未录到 /Odometry，无法补出对应历史证据。",
+    "未录到 /cloud_registered，无法补出对应历史证据。",
+    "未录到 /drone_0_diff_planner_node/grid_map/occupancy，无法补出对应历史证据。",
+    "未录到 /drone_0_diff_planner_node/grid_map/occupancy_inflate，无法补出对应历史证据。",
+    "未录到 /tf，无法补出对应历史证据。",
+    "没有可按 header 时间配对的 LIO/EKF 样本，不能判断二者数值对齐。",
+    "缺少同时间戳的 world/body 点云或 LIO 位姿，无法验证点云变换一致性。"
+  ],
+  "limitations": [
+    "只读离线分析，未调用 TF 变换、未重新运行定位或规划。",
+    "地图话题是裁剪后的可视化，不是完整内部占据缓冲区。",
+    "参数快照请结合录包器保存的 runtime_all.yaml 分析。",
+    "若多个 bag 时间重叠，会重复计数；请只传同一会话的不重叠分片。"
+  ]
+}

@@ -1,0 +1,1013 @@
+{
+  "bag": "/home/nvidia/flight_logs/20261021_210844_debug/flight_0.bag",
+  "start_epoch": 1792588133.3630147,
+  "end_epoch": 1792588159.1714797,
+  "start_shanghai": "2026-10-21T21:08:53.363015+08:00",
+  "duration": 25.808465003967285,
+  "inventory": {
+    "/Odometry": {
+      "count": 143,
+      "type": "nav_msgs/Odometry"
+    },
+    "/cloud_registered": {
+      "count": 144,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/cloud_registered_body": {
+      "count": 143,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/debugPx4ctrl": {
+      "count": 5120,
+      "type": "quadrotor_msgs/Px4ctrlDebug"
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "count": 206,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "count": 206,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/drone_0_traj_server/heartbeat": {
+      "count": 1715,
+      "type": "std_msgs/Empty"
+    },
+    "/ekf/ahead_ekf_odom": {
+      "count": 5043,
+      "type": "nav_msgs/Odometry"
+    },
+    "/ekf/cam_ekf_odom": {
+      "count": 143,
+      "type": "nav_msgs/Odometry"
+    },
+    "/ekf/ekf_odom": {
+      "count": 5043,
+      "type": "nav_msgs/Odometry"
+    },
+    "/mavros/battery": {
+      "count": 13,
+      "type": "sensor_msgs/BatteryState"
+    },
+    "/mavros/estimator_status": {
+      "count": 26,
+      "type": "mavros_msgs/EstimatorStatus"
+    },
+    "/mavros/extended_state": {
+      "count": 129,
+      "type": "mavros_msgs/ExtendedState"
+    },
+    "/mavros/imu/data": {
+      "count": 5073,
+      "type": "sensor_msgs/Imu"
+    },
+    "/mavros/imu/data_raw": {
+      "count": 5065,
+      "type": "sensor_msgs/Imu"
+    },
+    "/mavros/local_position/odom": {
+      "count": 775,
+      "type": "nav_msgs/Odometry"
+    },
+    "/mavros/local_position/pose": {
+      "count": 775,
+      "type": "geometry_msgs/PoseStamped"
+    },
+    "/mavros/local_position/velocity_body": {
+      "count": 775,
+      "type": "geometry_msgs/TwistStamped"
+    },
+    "/mavros/local_position/velocity_local": {
+      "count": 775,
+      "type": "geometry_msgs/TwistStamped"
+    },
+    "/mavros/rc/in": {
+      "count": 517,
+      "type": "mavros_msgs/RCIn"
+    },
+    "/mavros/setpoint_raw/attitude": {
+      "count": 5121,
+      "type": "mavros_msgs/AttitudeTarget"
+    },
+    "/mavros/setpoint_raw/target_attitude": {
+      "count": 258,
+      "type": "mavros_msgs/AttitudeTarget"
+    },
+    "/mavros/state": {
+      "count": 27,
+      "type": "mavros_msgs/State"
+    },
+    "/mavros/time_reference": {
+      "count": 26,
+      "type": "sensor_msgs/TimeReference"
+    },
+    "/mavros/timesync_status": {
+      "count": 258,
+      "type": "mavros_msgs/TimesyncStatus"
+    },
+    "/path": {
+      "count": 14,
+      "type": "nav_msgs/Path"
+    },
+    "/px4ctrl/state": {
+      "count": 5121,
+      "type": "quadrotor_msgs/Px4ctrlState"
+    },
+    "/rosout": {
+      "count": 70,
+      "type": "rosgraph_msgs/Log"
+    },
+    "/rosout_agg": {
+      "count": 36,
+      "type": "rosgraph_msgs/Log"
+    },
+    "/tf": {
+      "count": 145,
+      "type": "tf2_msgs/TFMessage"
+    },
+    "/tf_static": {
+      "count": 1,
+      "type": "tf2_msgs/TFMessage"
+    },
+    "/traj_start_trigger": {
+      "count": 1,
+      "type": "geometry_msgs/PoseStamped"
+    }
+  },
+  "callers": {
+    "/rosout": {
+      "/record_1792588132869673405": 45,
+      "/px4_imu_rate_keeper": 4,
+      "/mavros": 4,
+      "/takeoff_then_diff_planner_24288_1792588138190": 12,
+      "/px4ctrl": 5
+    },
+    "/rosout_agg": {
+      "/rosout": 36
+    },
+    "/tf": {
+      "/laserMapping": 145
+    },
+    "/tf_static": {
+      "/mavros": 1
+    },
+    "/mavros/imu/data": {
+      "/mavros": 5073
+    },
+    "/mavros/imu/data_raw": {
+      "/mavros": 5065
+    },
+    "/mavros/local_position/pose": {
+      "/mavros": 775
+    },
+    "/mavros/local_position/velocity_local": {
+      "/mavros": 775
+    },
+    "/mavros/local_position/velocity_body": {
+      "/mavros": 775
+    },
+    "/mavros/local_position/odom": {
+      "/mavros": 775
+    },
+    "/mavros/state": {
+      "/mavros": 27
+    },
+    "/mavros/rc/in": {
+      "/mavros": 517
+    },
+    "/cloud_registered": {
+      "/laserMapping": 144
+    },
+    "/mavros/setpoint_raw/target_attitude": {
+      "/mavros": 258
+    },
+    "/ekf/ahead_ekf_odom": {
+      "/ekf": 5043
+    },
+    "/ekf/ekf_odom": {
+      "/ekf": 5043
+    },
+    "/px4ctrl/state": {
+      "/px4ctrl": 5121
+    },
+    "/mavros/setpoint_raw/attitude": {
+      "/px4ctrl": 5121
+    },
+    "/debugPx4ctrl": {
+      "/px4ctrl": 5120
+    },
+    "/mavros/timesync_status": {
+      "/mavros": 258
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "/drone_0_diff_planner_node": 206
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "/drone_0_diff_planner_node": 206
+    },
+    "/mavros/extended_state": {
+      "/mavros": 129
+    },
+    "/Odometry": {
+      "/laserMapping": 143
+    },
+    "/ekf/cam_ekf_odom": {
+      "/ekf": 143
+    },
+    "/cloud_registered_body": {
+      "/laserMapping": 143
+    },
+    "/drone_0_traj_server/heartbeat": {
+      "/drone_0_diff_planner_node": 1715
+    },
+    "/mavros/estimator_status": {
+      "/mavros": 26
+    },
+    "/mavros/time_reference": {
+      "/mavros": 26
+    },
+    "/path": {
+      "/laserMapping": 14
+    },
+    "/mavros/battery": {
+      "/mavros": 13
+    },
+    "/traj_start_trigger": {
+      "/px4ctrl": 1
+    }
+  },
+  "coverage": {
+    "/rosout": {
+      "first": 0.0,
+      "last": 21.72666835784912,
+      "count": 70,
+      "max_gap": 6.300266981124878
+    },
+    "/rosout_agg": {
+      "first": 0.0005145072937011719,
+      "last": 21.73397445678711,
+      "count": 36,
+      "max_gap": 6.279884099960327
+    },
+    "/tf": {
+      "first": 0.0010502338409423828,
+      "last": 14.340327501296997,
+      "count": 145,
+      "max_gap": 0.13872861862182617
+    },
+    "/tf_static": {
+      "first": 0.0010607242584228516,
+      "last": 0.0010607242584228516,
+      "count": 1,
+      "max_gap": 0
+    },
+    "/mavros/imu/data": {
+      "first": 0.0010824203491210938,
+      "last": 25.80758810043335,
+      "count": 5073,
+      "max_gap": 0.04068922996520996
+    },
+    "/mavros/imu/data_raw": {
+      "first": 0.0011243820190429688,
+      "last": 25.805158376693726,
+      "count": 5065,
+      "max_gap": 0.04820728302001953
+    },
+    "/mavros/local_position/pose": {
+      "first": 0.005645036697387695,
+      "last": 25.794939756393433,
+      "count": 775,
+      "max_gap": 0.07878828048706055
+    },
+    "/mavros/local_position/velocity_local": {
+      "first": 0.005654096603393555,
+      "last": 25.795002222061157,
+      "count": 775,
+      "max_gap": 0.07838773727416992
+    },
+    "/mavros/local_position/velocity_body": {
+      "first": 0.005708456039428711,
+      "last": 25.795024156570435,
+      "count": 775,
+      "max_gap": 0.07838296890258789
+    },
+    "/mavros/local_position/odom": {
+      "first": 0.005785942077636719,
+      "last": 25.795108556747437,
+      "count": 775,
+      "max_gap": 0.0783698558807373
+    },
+    "/mavros/state": {
+      "first": 0.012286663055419922,
+      "last": 25.28624176979065,
+      "count": 27,
+      "max_gap": 1.013777732849121
+    },
+    "/mavros/rc/in": {
+      "first": 0.012301921844482422,
+      "last": 25.794662475585938,
+      "count": 517,
+      "max_gap": 0.07590961456298828
+    },
+    "/cloud_registered": {
+      "first": 0.04074549674987793,
+      "last": 14.343596696853638,
+      "count": 144,
+      "max_gap": 0.1336839199066162
+    },
+    "/mavros/setpoint_raw/target_attitude": {
+      "first": 0.04291343688964844,
+      "last": 25.801267385482788,
+      "count": 258,
+      "max_gap": 0.15706229209899902
+    },
+    "/ekf/ahead_ekf_odom": {
+      "first": 0.06704473495483398,
+      "last": 25.774005651474,
+      "count": 5043,
+      "max_gap": 0.06105947494506836
+    },
+    "/ekf/ekf_odom": {
+      "first": 0.06732010841369629,
+      "last": 25.77398657798767,
+      "count": 5043,
+      "max_gap": 0.06661367416381836
+    },
+    "/px4ctrl/state": {
+      "first": 0.06962800025939941,
+      "last": 25.808377981185913,
+      "count": 5121,
+      "max_gap": 0.1316065788269043
+    },
+    "/mavros/setpoint_raw/attitude": {
+      "first": 0.0696573257446289,
+      "last": 25.80840301513672,
+      "count": 5121,
+      "max_gap": 0.12945127487182617
+    },
+    "/debugPx4ctrl": {
+      "first": 0.07383275032043457,
+      "last": 25.808465003967285,
+      "count": 5120,
+      "max_gap": 0.12942790985107422
+    },
+    "/mavros/timesync_status": {
+      "first": 0.11815047264099121,
+      "last": 25.776463747024536,
+      "count": 258,
+      "max_gap": 0.12025690078735352
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "first": 0.1207122802734375,
+      "last": 25.71725869178772,
+      "count": 206,
+      "max_gap": 0.15372729301452637
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "first": 0.13381409645080566,
+      "last": 25.72943353652954,
+      "count": 206,
+      "max_gap": 0.17592382431030273
+    },
+    "/mavros/extended_state": {
+      "first": 0.15510177612304688,
+      "last": 25.756056785583496,
+      "count": 129,
+      "max_gap": 0.2133347988128662
+    },
+    "/Odometry": {
+      "first": 0.15648484230041504,
+      "last": 14.340309858322144,
+      "count": 143,
+      "max_gap": 0.13875436782836914
+    },
+    "/ekf/cam_ekf_odom": {
+      "first": 0.1574244499206543,
+      "last": 14.346635580062866,
+      "count": 143,
+      "max_gap": 0.13716602325439453
+    },
+    "/cloud_registered_body": {
+      "first": 0.1585521697998047,
+      "last": 14.34437084197998,
+      "count": 143,
+      "max_gap": 0.16364049911499023
+    },
+    "/drone_0_traj_server/heartbeat": {
+      "first": 0.18889331817626953,
+      "last": 25.800674438476562,
+      "count": 1715,
+      "max_gap": 0.0795435905456543
+    },
+    "/mavros/estimator_status": {
+      "first": 0.33859968185424805,
+      "last": 25.33822774887085,
+      "count": 26,
+      "max_gap": 1.0181844234466553
+    },
+    "/mavros/time_reference": {
+      "first": 0.3386549949645996,
+      "last": 25.338252782821655,
+      "count": 26,
+      "max_gap": 1.0180063247680664
+    },
+    "/path": {
+      "first": 0.5261247158050537,
+      "last": 13.542184352874756,
+      "count": 14,
+      "max_gap": 1.0222558975219727
+    },
+    "/mavros/battery": {
+      "first": 0.8995072841644287,
+      "last": 24.899359226226807,
+      "count": 13,
+      "max_gap": 2.009918451309204
+    },
+    "/traj_start_trigger": {
+      "first": 19.7853045463562,
+      "last": 19.7853045463562,
+      "count": 1,
+      "max_gap": 0
+    }
+  },
+  "path": [
+    {
+      "t": 0.5261247158050537,
+      "poses": 65,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588133.873524
+    },
+    {
+      "t": 1.5379462242126465,
+      "poses": 66,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588134.8736458
+    },
+    {
+      "t": 2.531787157058716,
+      "poses": 67,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588135.8736413
+    },
+    {
+      "t": 3.5251965522766113,
+      "poses": 68,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588136.8726826
+    },
+    {
+      "t": 4.547452449798584,
+      "poses": 69,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588137.8735929
+    },
+    {
+      "t": 5.5445802211761475,
+      "poses": 70,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588138.870521
+    },
+    {
+      "t": 6.544501066207886,
+      "poses": 71,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588139.872636
+    },
+    {
+      "t": 7.540935277938843,
+      "poses": 72,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588140.8739047
+    },
+    {
+      "t": 8.531774759292603,
+      "poses": 73,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588141.8737278
+    },
+    {
+      "t": 9.532429218292236,
+      "poses": 74,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588142.8696976
+    },
+    {
+      "t": 10.531253576278687,
+      "poses": 75,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588143.8736832
+    },
+    {
+      "t": 11.533764600753784,
+      "poses": 76,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588144.8733125
+    },
+    {
+      "t": 12.52957010269165,
+      "poses": 77,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588145.8737707
+    },
+    {
+      "t": 13.542184352874756,
+      "poses": 78,
+      "first_header": 1792588069.8727434,
+      "last_header": 1792588146.87208
+    }
+  ],
+  "checkpoints": [
+    {
+      "requested_offset_s": 0,
+      "/Odometry": {
+        "t": 0.15648484230041504,
+        "header": 1792588133.4735918,
+        "xyz": [
+          -0.020189743001759228,
+          -0.0517010460241597,
+          0.03569397609524954
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 0.06732010841369629,
+        "header": 1792588133.4201705,
+        "xyz": [
+          -0.022081246455403186,
+          -0.05204644853504258,
+          0.035378607281156174
+        ],
+        "v": [
+          -0.00325715151938129,
+          0.003921857706400997,
+          0.0006307187902586139
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 0.005785942077636719,
+        "header": 1792588133.3341658,
+        "xyz": [
+          -1.0237635374069214,
+          81.60980987548828,
+          -3.9049580097198486
+        ],
+        "v": [
+          7.669855817978643e-05,
+          0.00027208237008023527,
+          0.0006455187483408637
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 10,
+      "/Odometry": {
+        "t": 10.05796504020691,
+        "header": 1792588143.3724778,
+        "xyz": [
+          -0.022375330409730665,
+          -0.058185748501257205,
+          0.03735960026950007
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 9.992156744003296,
+        "header": 1792588143.3454328,
+        "xyz": [
+          -0.021724618926491437,
+          -0.05602082262756712,
+          0.036012470742480804
+        ],
+        "v": [
+          -0.0032939315708887867,
+          0.0013002182354424903,
+          0.00043203755088265023
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 10.007236242294312,
+        "header": 1792588143.3614328,
+        "xyz": [
+          -1.024017095565796,
+          81.61033630371094,
+          -3.9014079570770264
+        ],
+        "v": [
+          0.0002489983469320049,
+          -0.0009249207710060985,
+          0.00023374159348903787
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 12,
+      "/Odometry": {
+        "t": 12.02944016456604,
+        "header": 1792588145.372786,
+        "xyz": [
+          -0.013234433772288716,
+          -0.05857607868772386,
+          0.033258713954767816
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 12.019606828689575,
+        "header": 1792588145.3324716,
+        "xyz": [
+          -0.02106452096235861,
+          -0.059744536494917795,
+          0.030850521032908928
+        ],
+        "v": [
+          0.008520928735923559,
+          -0.009665627882948417,
+          -0.0061513836915977685
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 11.997337102890015,
+        "header": 1792588145.348479,
+        "xyz": [
+          -1.0089033842086792,
+          81.58622741699219,
+          -3.8802452087402344
+        ],
+        "v": [
+          -0.03715864681995236,
+          0.018082543786383683,
+          -0.015637033751191153
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 14.34,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 14.326520681381226,
+        "header": 1792588147.6845183,
+        "xyz": [
+          -0.004048365824391345,
+          -0.07325806290079195,
+          0.17302725423203194
+        ],
+        "v": [
+          -0.06801080634928806,
+          0.06769669307468794,
+          0.051602277525479766
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 14.327400922775269,
+        "header": 1792588147.6805184,
+        "xyz": [
+          -0.8378483057022095,
+          81.33599853515625,
+          -3.6577889919281006
+        ],
+        "v": [
+          -0.13438834464830418,
+          0.08857584193833717,
+          0.020421391554261897
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 16,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 15.987566232681274,
+        "header": 1792588149.347556,
+        "xyz": [
+          0.04250321921244368,
+          -0.06272299288865514,
+          0.24024740008034
+        ],
+        "v": [
+          0.12832658558144658,
+          0.16593413223863965,
+          0.22464133622446048
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 15.996161699295044,
+        "header": 1792588149.3535562,
+        "xyz": [
+          -0.8317322731018066,
+          81.31326293945312,
+          -3.8952062129974365
+        ],
+        "v": [
+          -0.031086799461194192,
+          -0.0066122800159485115,
+          -0.16956755661068953
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 18,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 17.98749017715454,
+        "header": 1792588151.3446062,
+        "xyz": [
+          0.3080560924494557,
+          0.28591799452598604,
+          0.934647457319272
+        ],
+        "v": [
+          0.14818503013374196,
+          0.17753065351482875,
+          0.4688667025698943
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 17.994434595108032,
+        "header": 1792588151.350606,
+        "xyz": [
+          -1.1776677370071411,
+          80.87022399902344,
+          -4.181121826171875
+        ],
+        "v": [
+          0.030970370722342894,
+          -0.05281317894994442,
+          -0.2852911753813281
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 20,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 19.98067283630371,
+        "header": 1792588153.3376472,
+        "xyz": [
+          0.63949880979262,
+          0.6587742463794664,
+          2.109133393061688
+        ],
+        "v": [
+          0.1889858039372798,
+          0.19981085181175015,
+          0.7131479547947794
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 19.9927818775177,
+        "header": 1792588153.3476472,
+        "xyz": [
+          -1.7499415874481201,
+          80.373779296875,
+          -4.445308685302734
+        ],
+        "v": [
+          0.02348046391648415,
+          -0.22181733272175658,
+          -0.18365794988248316
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 22,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 22.00005555152893,
+        "header": 1792588155.3547127,
+        "xyz": [
+          1.0962093242237378,
+          1.0858649374134342,
+          4.09340876518205
+        ],
+        "v": [
+          0.272046631053983,
+          0.22165116302344023,
+          1.2636403240493623
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 21.994683980941772,
+        "header": 1792588155.355713,
+        "xyz": [
+          -1.7211843729019165,
+          80.43318939208984,
+          -3.9400949478149414
+        ],
+        "v": [
+          0.004493308262745071,
+          0.07977065716025643,
+          0.05586236833868326
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    },
+    {
+      "requested_offset_s": 25.8,
+      "/Odometry": {
+        "t": 14.340309858322144,
+        "header": 1792588147.673524,
+        "xyz": [
+          -0.027748772479387056,
+          -0.0870279180151204,
+          0.19656099712175604
+        ],
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "camera_init",
+        "child": "body"
+      },
+      "/ekf/ekf_odom": {
+        "t": 25.77398657798767,
+        "header": 1792588159.1317885,
+        "xyz": [
+          2.495240953776105,
+          2.056391984895293,
+          10.463965388157336
+        ],
+        "v": [
+          0.47909398293405064,
+          0.3072584379832274,
+          2.0826879566344356
+        ],
+        "frame": "world",
+        "child": ""
+      },
+      "/mavros/local_position/odom": {
+        "t": 25.795108556747437,
+        "header": 1792588159.156788,
+        "xyz": [
+          -1.7054659128189087,
+          80.4326171875,
+          -3.8451366424560547
+        ],
+        "v": [
+          0.007114138418890539,
+          0.03269441686775879,
+          0.01570901439489254
+        ],
+        "frame": "map",
+        "child": "base_link"
+      }
+    }
+  ],
+  "state_changes": [
+    {
+      "t": 0.012286663055419922,
+      "topic": "/mavros/state",
+      "state": "armed: False; mode: \"OFFBOARD\""
+    },
+    {
+      "t": 0.06962800025939941,
+      "topic": "/px4ctrl/state",
+      "state": "state: 1"
+    },
+    {
+      "t": 10.170419692993164,
+      "topic": "/px4ctrl/state",
+      "state": "state: 4"
+    },
+    {
+      "t": 10.283438205718994,
+      "topic": "/mavros/state",
+      "state": "armed: True; mode: \"OFFBOARD\""
+    },
+    {
+      "t": 17.77858829498291,
+      "topic": "/px4ctrl/state",
+      "state": "state: 2"
+    },
+    {
+      "t": 20.284916639328003,
+      "topic": "/mavros/state",
+      "state": "armed: False; mode: \"OFFBOARD\""
+    }
+  ],
+  "method": "Offline ROS bag API; no ROS master, replay, transforms or control commands. Checkpoint LIO samples after its last message intentionally repeat its nearest last message; inspect actual sample t."
+}

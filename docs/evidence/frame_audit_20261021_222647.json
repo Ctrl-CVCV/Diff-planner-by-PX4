@@ -1,0 +1,681 @@
+{
+  "bags": [
+    "/home/nvidia/flight_logs/20261021_222647_debug/flight_0.bag"
+  ],
+  "inventory": {
+    "/Odometry": {
+      "messages": 2611,
+      "type": "nav_msgs/Odometry"
+    },
+    "/cloud_registered": {
+      "messages": 2611,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/cloud_registered_body": {
+      "messages": 2611,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/debugPx4ctrl": {
+      "messages": 49917,
+      "type": "quadrotor_msgs/Px4ctrlDebug"
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "messages": 1640,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "messages": 1641,
+      "type": "sensor_msgs/PointCloud2"
+    },
+    "/drone_0_planning/data_display": {
+      "messages": 1,
+      "type": "traj_utils/DataDisp"
+    },
+    "/drone_0_traj_server/heartbeat": {
+      "messages": 10403,
+      "type": "std_msgs/Empty"
+    },
+    "/ekf/ahead_ekf_odom": {
+      "messages": 43661,
+      "type": "nav_msgs/Odometry"
+    },
+    "/ekf/cam_ekf_odom": {
+      "messages": 2540,
+      "type": "nav_msgs/Odometry"
+    },
+    "/ekf/ekf_odom": {
+      "messages": 42666,
+      "type": "nav_msgs/Odometry"
+    },
+    "/mavros/battery": {
+      "messages": 144,
+      "type": "sensor_msgs/BatteryState"
+    },
+    "/mavros/estimator_status": {
+      "messages": 288,
+      "type": "mavros_msgs/EstimatorStatus"
+    },
+    "/mavros/extended_state": {
+      "messages": 1441,
+      "type": "mavros_msgs/ExtendedState"
+    },
+    "/mavros/imu/data": {
+      "messages": 49192,
+      "type": "sensor_msgs/Imu"
+    },
+    "/mavros/imu/data_raw": {
+      "messages": 49199,
+      "type": "sensor_msgs/Imu"
+    },
+    "/mavros/local_position/odom": {
+      "messages": 8660,
+      "type": "nav_msgs/Odometry"
+    },
+    "/mavros/local_position/pose": {
+      "messages": 8660,
+      "type": "geometry_msgs/PoseStamped"
+    },
+    "/mavros/local_position/velocity_body": {
+      "messages": 8660,
+      "type": "geometry_msgs/TwistStamped"
+    },
+    "/mavros/local_position/velocity_local": {
+      "messages": 8660,
+      "type": "geometry_msgs/TwistStamped"
+    },
+    "/mavros/rc/in": {
+      "messages": 5764,
+      "type": "mavros_msgs/RCIn"
+    },
+    "/mavros/setpoint_raw/attitude": {
+      "messages": 49917,
+      "type": "mavros_msgs/AttitudeTarget"
+    },
+    "/mavros/setpoint_raw/target_attitude": {
+      "messages": 2880,
+      "type": "mavros_msgs/AttitudeTarget"
+    },
+    "/mavros/state": {
+      "messages": 290,
+      "type": "mavros_msgs/State"
+    },
+    "/mavros/time_reference": {
+      "messages": 288,
+      "type": "sensor_msgs/TimeReference"
+    },
+    "/mavros/timesync_status": {
+      "messages": 2883,
+      "type": "mavros_msgs/TimesyncStatus"
+    },
+    "/path": {
+      "messages": 260,
+      "type": "nav_msgs/Path"
+    },
+    "/px4ctrl/state": {
+      "messages": 49911,
+      "type": "quadrotor_msgs/Px4ctrlState"
+    },
+    "/px4ctrl/takeoff_land": {
+      "messages": 1,
+      "type": "quadrotor_msgs/TakeoffLand"
+    },
+    "/rosout": {
+      "messages": 731,
+      "type": "rosgraph_msgs/Log"
+    },
+    "/rosout_agg": {
+      "messages": 718,
+      "type": "rosgraph_msgs/Log"
+    },
+    "/tf": {
+      "messages": 2610,
+      "type": "tf2_msgs/TFMessage"
+    },
+    "/tf_static": {
+      "messages": 2,
+      "type": "tf2_msgs/TFMessage"
+    }
+  },
+  "temporal_coverage_by_bag": [
+    {
+      "bag": "/home/nvidia/flight_logs/20261021_222647_debug/flight_0.bag",
+      "bag_start_s": 1792592820.4235616,
+      "bag_duration_s": 407.7183418273926,
+      "topics": {
+        "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+          "count": 1641,
+          "first_receipt_offset_s": 0.005258798599243164,
+          "last_receipt_offset_s": 407.7148234844208,
+          "max_receipt_gap_s": 188.03495264053345
+        },
+        "/drone_0_diff_planner_node/grid_map/occupancy": {
+          "count": 1640,
+          "first_receipt_offset_s": 0.006096839904785156,
+          "last_receipt_offset_s": 407.595089673996,
+          "max_receipt_gap_s": 188.04365396499634
+        },
+        "/tf_static": {
+          "count": 2,
+          "first_receipt_offset_s": 0.0156707763671875,
+          "last_receipt_offset_s": 180.68178582191467,
+          "max_receipt_gap_s": 180.66611504554749
+        },
+        "/mavros/imu/data": {
+          "count": 49192,
+          "first_receipt_offset_s": 0.01568770408630371,
+          "last_receipt_offset_s": 407.7145879268646,
+          "max_receipt_gap_s": 119.08588981628418
+        },
+        "/mavros/local_position/odom": {
+          "count": 8660,
+          "first_receipt_offset_s": 0.048827409744262695,
+          "last_receipt_offset_s": 407.6916809082031,
+          "max_receipt_gap_s": 119.10670948028564
+        },
+        "/tf": {
+          "count": 2610,
+          "first_receipt_offset_s": 0.10533452033996582,
+          "last_receipt_offset_s": 407.6273019313812,
+          "max_receipt_gap_s": 144.48283982276917
+        },
+        "/ekf/ekf_odom": {
+          "count": 42666,
+          "first_receipt_offset_s": 0.18959546089172363,
+          "last_receipt_offset_s": 407.6981363296509,
+          "max_receipt_gap_s": 157.13124465942383
+        },
+        "/Odometry": {
+          "count": 2611,
+          "first_receipt_offset_s": 0.23151612281799316,
+          "last_receipt_offset_s": 407.6231963634491,
+          "max_receipt_gap_s": 144.27393746376038
+        },
+        "/cloud_registered": {
+          "count": 2611,
+          "first_receipt_offset_s": 0.2378673553466797,
+          "last_receipt_offset_s": 407.63079619407654,
+          "max_receipt_gap_s": 144.27923345565796
+        },
+        "/cloud_registered_body": {
+          "count": 2611,
+          "first_receipt_offset_s": 0.23859930038452148,
+          "last_receipt_offset_s": 407.63115072250366,
+          "max_receipt_gap_s": 144.27634596824646
+        }
+      },
+      "lio_internal_gaps_while_ekf_continues": [
+        {
+          "start_receipt_offset_s": 21.769190549850464,
+          "end_receipt_offset_s": 33.384735345840454,
+          "duration_s": 11.61554479598999,
+          "ekf_messages_inside": 1976,
+          "max_ekf_receipt_gap_s": 0.07705020904541016
+        },
+        {
+          "start_receipt_offset_s": 276.1399509906769,
+          "end_receipt_offset_s": 276.7861030101776,
+          "duration_s": 0.6461520195007324,
+          "ekf_messages_inside": 110,
+          "max_ekf_receipt_gap_s": 0.055075883865356445
+        }
+      ],
+      "lio_missing_tail_while_ekf_s": 0.07493996620178223
+    }
+  ],
+  "frames": {
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "world": 1641
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "world": 1640
+    },
+    "/mavros/imu/data": {
+      "base_link": 49192
+    },
+    "/mavros/local_position/odom": {
+      "map": 8660
+    },
+    "/ekf/ekf_odom": {
+      "world": 42666
+    },
+    "/Odometry": {
+      "camera_init": 2611
+    },
+    "/cloud_registered": {
+      "camera_init": 2611
+    },
+    "/cloud_registered_body": {
+      "body": 2611
+    }
+  },
+  "child_frames": {
+    "/mavros/local_position/odom": {
+      "base_link": 8660
+    },
+    "/ekf/ekf_odom": {
+      "": 42666
+    },
+    "/Odometry": {
+      "body": 2611
+    }
+  },
+  "receipt_minus_header_s": {
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "count": 1641,
+      "median": 0.0033936500549316406,
+      "p95": 0.014929533004760742,
+      "max": 0.14089155197143555
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "count": 1640,
+      "median": 0.0008108615875244141,
+      "p95": 0.010243415832519531,
+      "max": 0.1306774616241455
+    },
+    "/mavros/imu/data": {
+      "count": 49192,
+      "median": 0.00633692741394043,
+      "p95": 0.01610112190246582,
+      "max": 0.11940789222717285
+    },
+    "/mavros/local_position/odom": {
+      "count": 8660,
+      "median": 0.0054836273193359375,
+      "p95": 0.01817631721496582,
+      "max": 0.13250041007995605
+    },
+    "/ekf/ekf_odom": {
+      "count": 42666,
+      "median": 0.023111820220947266,
+      "p95": 0.048224687576293945,
+      "max": 0.12246894836425781
+    },
+    "/Odometry": {
+      "count": 2611,
+      "median": 0.04690909385681152,
+      "p95": 0.38840246200561523,
+      "max": 8.664259910583496
+    },
+    "/cloud_registered": {
+      "count": 2611,
+      "median": 0.050095558166503906,
+      "p95": 0.3910341262817383,
+      "max": 8.677403926849365
+    },
+    "/cloud_registered_body": {
+      "count": 2611,
+      "median": 0.05436897277832031,
+      "p95": 0.40054774284362793,
+      "max": 8.677577257156372
+    }
+  },
+  "zero_header_stamps": {},
+  "cloud_point_counts": {
+    "/drone_0_diff_planner_node/grid_map/occupancy_inflate": {
+      "count": 1641,
+      "median": 60908,
+      "p95": 72074,
+      "max": 73840
+    },
+    "/drone_0_diff_planner_node/grid_map/occupancy": {
+      "count": 1640,
+      "median": 2292,
+      "p95": 4206,
+      "max": 4436
+    },
+    "/cloud_registered": {
+      "count": 2611,
+      "median": 5060,
+      "p95": 5333,
+      "max": 8411
+    },
+    "/cloud_registered_body": {
+      "count": 2611,
+      "median": 5060,
+      "p95": 5333,
+      "max": 8411
+    }
+  },
+  "tf_edges": {
+    "map -> map_ned": {
+      "count": 2,
+      "first": {
+        "stamp": 1792592682.4178035,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          4.329780281177467e-17,
+          0.7071067811865476,
+          0.7071067811865475,
+          4.329780281177466e-17
+        ]
+      },
+      "topics": [
+        "/tf_static"
+      ],
+      "parent": "map",
+      "child": "map_ned",
+      "last": {
+        "stamp": 1792593000.9389923,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          4.329780281177467e-17,
+          0.7071067811865476,
+          0.7071067811865475,
+          4.329780281177466e-17
+        ]
+      }
+    },
+    "odom -> odom_ned": {
+      "count": 2,
+      "first": {
+        "stamp": 1792592682.4178114,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          4.329780281177467e-17,
+          0.7071067811865476,
+          0.7071067811865475,
+          4.329780281177466e-17
+        ]
+      },
+      "topics": [
+        "/tf_static"
+      ],
+      "parent": "odom",
+      "child": "odom_ned",
+      "last": {
+        "stamp": 1792593000.9389997,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          4.329780281177467e-17,
+          0.7071067811865476,
+          0.7071067811865475,
+          4.329780281177466e-17
+        ]
+      }
+    },
+    "base_link -> base_link_frd": {
+      "count": 2,
+      "first": {
+        "stamp": 1792592682.417813,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          6.123233995736766e-17,
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "topics": [
+        "/tf_static"
+      ],
+      "parent": "base_link",
+      "child": "base_link_frd",
+      "last": {
+        "stamp": 1792593000.9390013,
+        "xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "wxyz": [
+          6.123233995736766e-17,
+          1.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "camera_init -> body": {
+      "count": 2610,
+      "first": {
+        "stamp": 1792592820.506136,
+        "xyz": [
+          -0.002420761114412824,
+          -0.05607833723663483,
+          -0.006911724172268887
+        ],
+        "wxyz": [
+          0.9999873009150937,
+          -0.0030142916955802693,
+          0.00038042071280856594,
+          0.004020862370328381
+        ]
+      },
+      "topics": [
+        "/tf"
+      ],
+      "parent": "camera_init",
+      "child": "body",
+      "last": {
+        "stamp": 1792593228.0059276,
+        "xyz": [
+          -0.026971424219248738,
+          -0.05763673480865494,
+          0.022278084493921324
+        ],
+        "wxyz": [
+          0.9999654422866003,
+          -0.004530798517757613,
+          -0.001184621485501252,
+          0.006868971487153854
+        ]
+      }
+    }
+  },
+  "goals": [],
+  "lio_vs_ekf_numeric_only": {
+    "reference_samples": 2611,
+    "paired_samples": 2481,
+    "unpaired_samples": 130,
+    "max_pair_dt_s": 0.03,
+    "position_error_m": {
+      "count": 2481,
+      "median": 0.003959908569281207,
+      "p95": 1.638761466106395,
+      "max": 34.59115260863296
+    },
+    "orientation_error_deg": {
+      "count": 2481,
+      "median": 0.11866269059572541,
+      "p95": 3.659342711961621,
+      "max": 79.84773103709952
+    },
+    "pair_dt_s": {
+      "count": 2481,
+      "median": 0.0015244483947753906,
+      "p95": 0.003977537155151367,
+      "max": 0.013335227966308594
+    },
+    "median_estimate_minus_reference_xyz_m": [
+      -4.865044897542359e-05,
+      0.001394547163524086,
+      -1.9181513099819636e-06
+    ]
+  },
+  "recorded_lio_ekf_tf_paths": [
+    {
+      "from": "camera_init",
+      "to": "world",
+      "path": null
+    }
+  ],
+  "registered_cloud_transform": {
+    "paired_frames": 2611,
+    "sampled_point_error_m": {
+      "count": 83183,
+      "median": 1.1151977075335488e-07,
+      "p95": 1.2486329844358169e-06,
+      "max": 5.852251493442645e-05
+    },
+    "note": "抽样检验 cloud_world = R_odom * cloud_body + p_odom；不证明物理外参标定正确。"
+  },
+  "ekf_vs_fcu_attitude_alignment": {
+    "paired_samples": 42666,
+    "first_imu_times_inverse_ekf_wxyz": [
+      -0.24629142146281519,
+      0.012464148644344352,
+      0.011082113273257758,
+      -0.9690523461436041
+    ],
+    "absolute_attitude_difference_deg": {
+      "count": 42666,
+      "median": 167.08554755957732,
+      "p95": 171.22010711059622,
+      "max": 172.27081859180183
+    },
+    "alignment_change_from_first_deg": {
+      "count": 42666,
+      "median": 15.687185801673689,
+      "p95": 19.809652842918904,
+      "max": 85.18885878764678
+    },
+    "note": "FCU 与 LIO 的世界航向可以不同；绝对角差非零不直接表示错误。"
+  },
+  "warnings": [
+    "/home/nvidia/flight_logs/20261021_222647_debug/flight_0.bag：包内 /Odometry 中断后恢复，最长 11.616s（相对 21.769～33.385s），期间 /ekf/ekf_odom 持续发布；末尾恢复或配对误差小不代表中断期间定位可信。",
+    "LIO 与 EKF 的 frame_id 不一致；下方数值比较未应用 TF，不能当成坐标变换已正确的证明。",
+    "录包内没有连接 camera_init 与 world 的 TF 链；这是显示/接口断链，不直接证明数值位置错误。",
+    "LIO/EKF 数值位置差 p95 > 0.10m；这是排查阈值，不是飞行安全认证。"
+  ],
+  "limitations": [
+    "只读离线分析，未调用 TF 变换、未重新运行定位或规划。",
+    "地图话题是裁剪后的可视化，不是完整内部占据缓冲区。",
+    "参数快照请结合录包器保存的 runtime_all.yaml 分析。",
+    "若多个 bag 时间重叠，会重复计数；请只传同一会话的不重叠分片。"
+  ],
+  "runtime_parameters": {
+    "source": "/home/nvidia/flight_logs/20261021_222647_debug/runtime_all.yaml",
+    "common": {
+      "imu_topic": "/mavros/imu/data_raw",
+      "lid_topic": "/livox/lidar",
+      "time_offset_lidar_to_imu": -0.068406,
+      "time_sync_en": false
+    },
+    "mapping": {
+      "acc_cov": 0.1,
+      "b_acc_cov": 0.0001,
+      "b_gyr_cov": 0.0001,
+      "det_range": 100.0,
+      "extrinsic_R": [
+        0.858277,
+        -0.017062,
+        0.512903,
+        0.026414,
+        0.999591,
+        -0.010949,
+        -0.512507,
+        0.022946,
+        0.858377
+      ],
+      "extrinsic_T": [
+        0.006849,
+        -0.03499,
+        0.069355
+      ],
+      "extrinsic_est_en": false,
+      "fov_degree": 360,
+      "gyr_cov": 0.1
+    },
+    "ekf": {
+      "Rr_i": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "acc_cov": 0.2,
+      "cutoff_freq": 20.0,
+      "gyro_cov": 0.05,
+      "imu_trans_x": 0.0,
+      "imu_trans_y": 0.0,
+      "imu_trans_z": 0.0,
+      "offset_px": 0.0,
+      "offset_py": 0.0,
+      "offset_pz": 0.0,
+      "position_cov": 0.01,
+      "q_rp_cov": 0.01,
+      "q_yaw_cov": 0.01,
+      "rotation_imu": [
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale_g": 1.0,
+      "tr_i": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "grid_map": {
+      "cloud_enable_raycast": true,
+      "cx": 319.31427001953125,
+      "cy": 239.09725952148438,
+      "depth_filter_margin": 2,
+      "depth_filter_maxdist": 5.0,
+      "depth_filter_mindist": 0.2,
+      "depth_filter_tolerance": 0.15,
+      "enable_virtual_wall": true,
+      "fading_time": -1.0,
+      "frame_id": "world",
+      "fx": 386.2706298828125,
+      "fy": 386.2706298828125,
+      "ground_height": -0.01,
+      "init_x": 0,
+      "init_y": 0,
+      "init_z": 0,
+      "k_depth_scaling_factor": 1000.0,
+      "lidar_p_hit": 0.9,
+      "lidar_p_max": 0.98,
+      "lidar_p_min": 0.12,
+      "lidar_p_miss": 0.49,
+      "lidar_p_occ": 0.85,
+      "local_update_range_x": 5.5,
+      "local_update_range_y": 5.5,
+      "local_update_range_z": 2.0,
+      "max_ray_length": 4.5,
+      "min_ray_length": 0.1,
+      "obstacles_inflation": 0.35,
+      "p_hit": 0.65,
+      "p_max": 0.9,
+      "p_min": 0.12,
+      "p_miss": 0.35,
+      "p_occ": 0.8,
+      "pose_type": 2,
+      "resolution": 0.0875,
+      "show_occ_time": false,
+      "skip_pixel": 2,
+      "use_depth_filter": true,
+      "virtual_ceil": 1.2,
+      "virtual_ground": 0.1,
+      "visualization_truncate_height": 1.9
+    },
+    "note": "参数服务器可能残留已退出节点的参数，须结合 nodes.txt 与节点信息核实。"
+  }
+}
