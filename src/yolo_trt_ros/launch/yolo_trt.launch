@@ -1,0 +1,53 @@
+<launch>
+  <arg name="device" default="/dev/video0"/>
+  <arg name="width" default="640"/>
+  <arg name="height" default="480"/>
+  <arg name="fps" default="60.0"/>
+  <arg name="fourcc" default="MJPG"/>
+  <arg name="buffer_size" default="2"/>
+  <arg name="frame_id" default="camera_optical_frame"/>
+  <arg name="image_topic" default="/usb_cam/image_raw"/>
+  <arg name="engine_path" default="/home/nvidia/yolo/best.engine"/>
+  <arg name="conf_thres" default="0.60"/>
+  <arg name="nms_iou" default="0.60"/>
+  <arg name="batch_timeout" default="0.1"/>
+  <arg name="infer_threads" default="3"/>
+  <!-- Local preview is throttled: at 15W the GPU cannot composite 60 FPS preview
+       and run 60 FPS inference at the same time. Raise display_fps (e.g. 30/60)
+       for a smoother preview at lower inference throughput, or use show_window:=false. -->
+  <arg name="display_fps" default="10.0"/>
+  <arg name="show_window" default="true"/>
+  <arg name="window_name" default="YOLO TensorRT"/>
+  <arg name="window_width" default="640"/>
+  <arg name="window_height" default="480"/>
+  <arg name="preview_topic" default="/yolo/preview/image"/>
+  <arg name="detections_topic" default="/yolo/detections"/>
+
+  <include file="$(find yolo_trt_ros)/launch/camera.launch">
+    <arg name="device" value="$(arg device)"/>
+    <arg name="width" value="$(arg width)"/>
+    <arg name="height" value="$(arg height)"/>
+    <arg name="fps" value="$(arg fps)"/>
+    <arg name="fourcc" value="$(arg fourcc)"/>
+    <arg name="buffer_size" value="$(arg buffer_size)"/>
+    <arg name="frame_id" value="$(arg frame_id)"/>
+    <arg name="image_topic" value="$(arg image_topic)"/>
+  </include>
+
+  <node pkg="yolo_trt_ros" type="yolo_trt_node.py" name="yolo_trt_detector" output="screen">
+    <env name="PYTHONNOUSERSITE" value="1"/>
+    <param name="engine_path" value="$(arg engine_path)" type="str"/>
+    <param name="image_topic" value="$(arg image_topic)" type="str"/>
+    <param name="conf_thres" value="$(arg conf_thres)" type="double"/>
+    <param name="nms_iou" value="$(arg nms_iou)" type="double"/>
+    <param name="batch_timeout" value="$(arg batch_timeout)" type="double"/>
+    <param name="infer_threads" value="$(arg infer_threads)" type="int"/>
+    <param name="display_fps" value="$(arg display_fps)" type="double"/>
+    <param name="show_window" value="$(arg show_window)" type="bool"/>
+    <param name="window_name" value="$(arg window_name)" type="str"/>
+    <param name="window_width" value="$(arg window_width)" type="int"/>
+    <param name="window_height" value="$(arg window_height)" type="int"/>
+    <param name="preview_topic" value="$(arg preview_topic)" type="str"/>
+    <param name="detections_topic" value="$(arg detections_topic)" type="str"/>
+  </node>
+</launch>

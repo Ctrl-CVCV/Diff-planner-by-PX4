@@ -1,0 +1,22 @@
+<launch>
+  <arg name="device" default="/dev/video0"/>
+  <arg name="width" default="640"/>
+  <arg name="height" default="480"/>
+  <arg name="fps" default="30.0"/>
+  <arg name="fourcc" default="MJPG"/>
+  <arg name="buffer_size" default="2"/>
+  <arg name="frame_id" default="camera_optical_frame"/>
+  <arg name="image_topic" default="/usb_cam/image_raw"/>
+
+  <node pkg="yolo_trt_ros" type="camera_publisher.py" name="usb_camera" output="screen">
+    <env name="PYTHONNOUSERSITE" value="1"/>
+    <param name="device" value="$(arg device)" type="str"/>
+    <param name="width" value="$(arg width)" type="int"/>
+    <param name="height" value="$(arg height)" type="int"/>
+    <param name="fps" value="$(arg fps)" type="double"/>
+    <param name="fourcc" value="$(arg fourcc)" type="str"/>
+    <param name="buffer_size" value="$(arg buffer_size)" type="int"/>
+    <param name="frame_id" value="$(arg frame_id)" type="str"/>
+    <param name="image_topic" value="$(arg image_topic)" type="str"/>
+  </node>
+</launch>

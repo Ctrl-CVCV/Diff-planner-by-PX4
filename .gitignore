@@ -53,6 +53,9 @@ PCD/
 core
 core.[0-9]*
 
+# TensorRT engines are GPU/machine-specific build artifacts
+*.engine
+
 # Editor state, local backups and machine-specific credentials
 .vscode/
 .idea/
