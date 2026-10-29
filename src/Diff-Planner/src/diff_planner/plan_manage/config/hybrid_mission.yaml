@@ -1,0 +1,94 @@
+frame_id: world
+coordinate_mode: takeoff_relative
+planner_node: /drone_0_diff_planner_node
+traj_server_node: /drone_0_traj_server
+controller_node: /px4ctrl
+
+points:
+  A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
+  B: {xyz: [1.75, 0.0, 0.8], yaw_deg: 0.0}
+  C: {xyz: [0.45, 1.37, 0.8],yaw_deg: 180.0}
+  D: {xyz: [0.02,1.38,0.8], yaw_deg: 180.0}
+  E: {xyz: [1.87, 2.75, 0.8], yaw_deg: 90.0, measured: true}
+  # F 是 Planner → 直控的切换点：到点悬停 arrival_dwell 秒后切直控。实测后填坐标并把 measured 改成 true。
+  F: {xyz: [1.05, 2.75, 0.8], yaw_deg: 90.0, measured: true}
+  # G、H 由普通 PX4Ctrl 直控，各自到点悬停 arrival_dwell 秒；实测后填坐标并改 measured。
+  G: {xyz: [2.65, 2.75, 0.8], yaw_deg: 90.0, measured: true}
+  H: {xyz: [1.96, 2.70, 0.8], yaw_deg: 90.0, measured: true}
+  # I 是终点：回到 A 正上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
+  I: {xyz: [0.0, 0.0, 0.8], yaw_deg: 180.0}
+
+takeoff:
+  height: 0.80
+  timeout: 60.0
+  ack_timeout: 5.0
+  fcu_confirm_timeout: 2.0
+  hover_seconds: 3.
+  corridor_radius: 0.20
+  max_sink: 0.10
+
+direct:
+  max_speed: 0.20
+  max_acceleration: 0.30
+  max_jerk: 1.0
+  min_duration: 3.0
+  max_yaw_rate_deg: 25.0
+
+mission:
+  publish_hz: 50.0
+  startup_timeout: 10.0
+  planner_first_command_timeout: 2.0
+  planner_timeout: 45.0
+  direct_timeout: 30.0
+  arrival_dwell: 3.0
+  hover_seconds: 3.0
+  pass_radius: 0.30
+  landing_ack_timeout: 2.0
+  landing_timeout: 25.0
+
+safety:
+  position_tolerance: 0.10
+  yaw_tolerance_deg: 10.0
+  arrival_speed: 0.20
+  telemetry_timeout: 0.30
+  fcu_timeout: 3.0
+  rc_timeout: 0.50
+  map_timeout: 2.0
+  planner_command_timeout: 0.25
+  max_header_age: 0.30
+  max_future_stamp: 0.05
+  motion_timeout: 3.0
+  motion_distance: 0.04
+  max_tracking_error: 0.60
+  # 标准速度 0.30m/s：指令上限 0.45（Planner 接受上限 0.40），实测上限 0.65（PX4Ctrl 反馈钳位 0.50）。
+  max_measured_speed: 0.65
+  max_command_speed: 0.45
+  max_command_acceleration: 2.0
+  max_command_jerk: 10.0
+  # 估计器健康：2026-10-29 B→C 失控时 /Odometry 延迟 0.9~1.2s（正常 0.05~0.15s），EKF 时间同步失效。
+  # 这重新启用了 2026-10-26 按使用者要求取消的 LIO header.stamp 检查，区别是必须持续超限
+  # lio_grace 秒才中止（单次抖动不会触发）。任一阈值填 0 即关闭该项检查。
+  max_lio_age: 0.30
+  lio_grace: 1.0
+  max_ekf_lio_divergence: 0.35
+  divergence_grace: 0.5
+  preflight_estimator_seconds: 2.0
+  # 距起飞原点的水平围栏；0 表示不启用。启用前确认所有航点都在半径内（预检会校验）。
+  max_distance_from_origin: 0.0
+
+topics:
+  odom: /ekf/ekf_odom
+  lio: /Odometry
+  imu: /mavros/imu/data
+  fcu: /mavros/state
+  extended: /mavros/extended_state
+  rc: /mavros/rc/in
+  ctrl: /px4ctrl/state
+  cloud: /cloud_registered
+  map: /drone_0_diff_planner_node/grid_map/occupancy_inflate
+  planner_cmd: /drone_0_mission/planner_cmd
+  output_cmd: /setpoints_cmd
+  goal: /goal
+  stop: /mandatory_stop_to_planner
+  land: /px4ctrl/takeoff_land
+  status: /drone_0_mission/state

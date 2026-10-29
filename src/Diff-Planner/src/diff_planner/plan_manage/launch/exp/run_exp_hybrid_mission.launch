@@ -1,0 +1,6 @@
+<launch>
+    <include file="$(find diff_planner)/launch/exp/run_exp_single_lio.launch">
+        <arg name="position_cmd_topic" value="/drone_0_mission/planner_cmd"/>
+        <arg name="hold_at_end" value="true"/>
+    </include>
+</launch>
