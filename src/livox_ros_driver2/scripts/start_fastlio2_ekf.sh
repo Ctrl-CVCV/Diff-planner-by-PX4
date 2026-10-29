@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-click startup: PX4/MAVROS -> IMU rate keeper -> Livox MID360s driver
-#                    -> FAST-LIO2 + RViz -> EKF.
+#                    -> FAST-LIO2 (no RViz) -> EKF.
 #
 # This script intentionally does NOT start px4ctrl, arm the vehicle, or send any
 # takeoff command. Press Ctrl-C to stop the processes started by this script.
@@ -35,7 +35,7 @@ usage() {
   3. PX4 IMU 频率保持节点: ${IMU_RATE} Hz
   4. Livox MID360s 驱动节点 /livox_lidar_publisher2
      并确认点云话题 /livox/lidar 有实际数据
-  5. FAST-LIO2，并打开 RViz
+  5. FAST-LIO2（不启动 RViz）
   6. EKF，输出 /ekf/ekf_odom
 
 选项：
@@ -199,7 +199,9 @@ stop_component() {
 }
 
 ros_master_ready() {
-  timeout 2 rosparam list >/dev/null 2>&1
+  # rosparam/python startup takes ~1s on the Jetson; 2s was too tight when the
+  # system is busy, which made the script start a second roscore by mistake.
+  timeout 5 rosparam list >/dev/null 2>&1
 }
 
 wait_for_master() {
@@ -263,20 +265,79 @@ sys.exit(0 if received.is_set() else 1)
 ' "$topic" >/dev/null 2>&1
 }
 
+mavros_state_connected() {
+  local timeout_s="${1:-5}"
+  # `rostopic echo` needs ~3s just to start on this Jetson, so polling it with
+  # `timeout 2` reported "not connected" even while MAVROS was connected.
+  # Use one long-lived rospy probe instead. Exit 0 iff connected: True arrives.
+  timeout "$((timeout_s + 10))s" python3 -c '
+import sys
+import threading
+import rospy
+from mavros_msgs.msg import State
+
+connected = threading.Event()
+
+def callback(msg):
+    if msg.connected:
+        connected.set()
+
+rospy.init_node("probe_mavros_state", anonymous=True, disable_signals=True)
+rospy.Subscriber("/mavros/state", State, callback, queue_size=1)
+sys.exit(0 if connected.wait(float(sys.argv[1])) else 1)
+' "$timeout_s" >/dev/null 2>&1
+}
+
 wait_for_mavros_connection() {
   local timeout_s="$1"
-  local end=$((SECONDS + timeout_s))
   printf '等待 %-24s (PX4连接) ' "/mavros/state"
-  while (( SECONDS < end )); do
-    if timeout 2 rostopic echo -n 1 /mavros/state 2>/dev/null | grep -q 'connected: True'; then
+  local rc=0
+  # One subscriber for the whole wait: no repeated ~3s rostopic startups, and
+  # keep enough information to tell "no state message" apart from
+  # "state received but connected: False".
+  timeout "$((timeout_s + 10))s" python3 -c '
+import sys
+import threading
+import rospy
+from mavros_msgs.msg import State
+
+seen = {"value": False}
+connected = threading.Event()
+
+def callback(msg):
+    seen["value"] = True
+    if msg.connected:
+        connected.set()
+
+rospy.init_node("wait_for_mavros_connection", anonymous=True, disable_signals=True)
+rospy.Subscriber("/mavros/state", State, callback, queue_size=1)
+if connected.wait(float(sys.argv[1])):
+    sys.exit(0)
+sys.exit(1 if seen["value"] else 2)
+' "$timeout_s" >/dev/null 2>&1 || rc=$?
+
+  case "$rc" in
+    0)
       echo "[OK]"
       return 0
-    fi
-    printf '.'
-    sleep 0.5
-  done
-  echo "[超时]"
-  echo "错误：MAVROS未连接PX4。请检查飞控电源、USB设备和FCU地址：$FCU_URL" >&2
+      ;;
+    1)
+      echo "[未连接]"
+      echo "错误：收到 /mavros/state，但 connected=false（MAVROS 已运行，飞控未连上）。" >&2
+      echo "      请检查飞控电源、USB 线和 FCU 地址 $FCU_URL。" >&2
+      echo "      手动确认：source $WS_SETUP && rostopic echo -n 1 /mavros/state" >&2
+      ;;
+    2)
+      echo "[未收到消息]"
+      echo "错误：${timeout_s}s 内没有收到 /mavros/state（MAVROS 节点可能未启动或已崩溃）。" >&2
+      echo "      查看日志：$LOG_DIR/mavros.log" >&2
+      ;;
+    *)
+      echo "[超时]"
+      echo "错误：等待 MAVROS 状态超时（诊断进程异常退出）。" >&2
+      echo "      查看日志：$LOG_DIR/mavros.log" >&2
+      ;;
+  esac
   return 1
 }
 
@@ -356,11 +417,17 @@ else
 fi
 
 # 2. MAVROS
-if timeout 2 rostopic echo -n 1 /mavros/state 2>/dev/null | grep -q 'connected: True'; then
+if mavros_state_connected 5; then
   echo "复用现有 MAVROS/PX4 连接。"
 else
   if (( START_MAVROS )); then
-    start_component mavros roslaunch mavros px4.launch "fcu_url:=$FCU_URL"
+    if timeout 5 rosnode list 2>/dev/null | grep -Fxq '/mavros'; then
+      # Two MAVROS processes would fight over /dev/ttyACM0 and the /mavros
+      # node name. If it is already running, wait instead of starting another.
+      echo "已有 /mavros 节点但尚未连接 PX4，等待其连接（不重复启动 MAVROS）。"
+    else
+      start_component mavros roslaunch mavros px4.launch "fcu_url:=$FCU_URL"
+    fi
   else
     echo "--no-mavros 已指定，等待外部MAVROS连接。"
   fi
@@ -416,19 +483,16 @@ else
   fi
 fi
 
-# 5. FAST-LIO2 with RViz
-if timeout 2 rostopic echo -n 1 /Odometry >/dev/null 2>&1; then
+# 5. FAST-LIO2 (RViz disabled)
+if message_available /Odometry 6; then
   echo "复用现有 FAST-LIO2 /Odometry。"
-  if ! rosnode list 2>/dev/null | grep -qx '/rviz'; then
-    start_component rviz rosrun rviz rviz -d "$WS/src/FAST_LIO/rviz_cfg/loam_livox.rviz"
-  fi
 else
-  start_component fast_lio_rviz roslaunch fast_lio mapping_mid360_px4.launch rviz:=true
+  start_component fast_lio roslaunch fast_lio mapping_mid360_px4.launch rviz:=false
   wait_for_message /Odometry "$WAIT_ODOM" "FAST-LIO2里程计"
 fi
 
 # 6. EKF
-if timeout 2 rostopic echo -n 1 /ekf/ekf_odom >/dev/null 2>&1; then
+if message_available /ekf/ekf_odom 6; then
   echo "复用现有 EKF /ekf/ekf_odom。"
 else
   start_component ekf roslaunch ekf ekf_fastlio2.launch
@@ -442,7 +506,7 @@ LiDAR       : /livox/lidar
 FAST-LIO2   : /Odometry
 注册点云    : /cloud_registered
 EKF         : /ekf/ekf_odom
-RViz        : 已请求启动
+RViz        : 未启动（rviz:=false）
 
 请在另外一个终端检查：
   source $WS_SETUP

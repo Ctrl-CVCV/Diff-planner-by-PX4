@@ -2,7 +2,8 @@
 """ROS1 PX4Ctrl takeoff -> confirmed hover -> one Diff-Planner goal.
 
 Default: read-only preflight. No arming/mode services, no direct setpoints,
-no retries, no automatic landing/disarm. Uses wall-clock deadlines.
+no retries or direct disarm. After a goal, no horizontal motion within three
+seconds requests PX4Ctrl landing once, only with healthy telemetry and RC.
 """
 import argparse
 from collections import deque
@@ -21,7 +22,9 @@ TOPICS = {
     'map': PLANNER + '/grid_map/occupancy_inflate',
     'cmd': '/setpoints_cmd',
 }
-MANUAL, HOVER, COMMAND, TAKEOFF = 1, 2, 3, 4
+MANUAL, HOVER, COMMAND, TAKEOFF, LANDING = 1, 2, 3, 4, 5
+FCU_CONFIRM_TIMEOUT = 2.0
+GOAL_MOTION_TIMEOUT = 3.0
 
 
 class SafetyError(RuntimeError):
@@ -121,6 +124,7 @@ class Sequencer:
         self.mon = Monitor(rospy)
         self.flight_requested = False
         self.goal_sent = False
+        self.landing_requested = False
 
     def param(self, name):
         if not self.ros.has_param(name):
@@ -226,21 +230,47 @@ class Sequencer:
     def wait_hover(self, start, sent):
         stable_since = None
         seen_takeoff = False
+        fcu_confirmed = False
+        fcu_wait_started = None
+        previous_status = None
         deadline = sent + self.args.takeoff_timeout
         while time.monotonic() < deadline:
             fcu, odom, ctrl = self.live()
             now = time.monotonic()
             if not self.mon.quiet(0.3):
                 raise SafetyError('起飞/悬停阶段提前收到规划指令，拒绝继续发送目标')
+            status = (ctrl.state, fcu.armed, fcu.mode)
+            if status != previous_status:
+                self.ros.loginfo('起飞状态：PX4Ctrl=%s, armed=%s, mode=%s', *status)
+                previous_status = status
+            p, v = pose(odom)
             if ctrl.state in (TAKEOFF, HOVER):
                 seen_takeoff = True
-                if not fcu.armed or fcu.mode != 'OFFBOARD':
-                    raise SafetyError('起飞阶段未保持armed+OFFBOARD，请飞手接管')
+                if fcu.armed and fcu.mode == 'OFFBOARD':
+                    if not fcu_confirmed:
+                        self.ros.loginfo('已确认飞控armed+OFFBOARD，继续等待稳定悬停')
+                    fcu_confirmed = True
+                elif fcu_confirmed or ctrl.state == HOVER:
+                    raise SafetyError('起飞阶段未保持armed+OFFBOARD：PX4Ctrl=%s, armed=%s, mode=%s；请飞手接管'
+                                      % status)
+                else:
+                    if fcu_wait_started is None:
+                        fcu_wait_started = now
+                        self.ros.logwarn('AUTO_TAKEOFF已进入，等待/mavros/state确认armed+OFFBOARD，最多%.1f秒；不发送目标',
+                                         FCU_CONFIRM_TIMEOUT)
+                    if now - fcu_wait_started >= FCU_CONFIRM_TIMEOUT:
+                        raise SafetyError('起飞状态确认超时：PX4Ctrl=%s, armed=%s, mode=%s；不发送目标，请飞手接管'
+                                          % status)
+                    if (math.dist(p, start) > 0.1
+                            or math.sqrt(sum(speed * speed for speed in v)) > 0.1):
+                        raise SafetyError('尚未确认armed+OFFBOARD但机体已离地/移动，拒绝继续等待；请飞手接管')
+                    stable_since = None
+                    self.sleep(0.05)
+                    continue
             elif seen_takeoff or ctrl.state != MANUAL:
                 raise SafetyError('起飞状态异常，当前PX4Ctrl=%s' % ctrl.state)
             if not seen_takeoff and now-sent > 5:
                 raise SafetyError('5秒内未进入AUTO_TAKEOFF；查看PX4Ctrl拒绝原因，不自动重试')
-            p, v = pose(odom)
             if ctrl.state == HOVER and hover_ok(p, v, start, start[2]+self.height):
                 stable_since = stable_since or now
                 if now-stable_since >= self.args.hover_seconds:
@@ -251,7 +281,57 @@ class Sequencer:
             self.sleep(0.05)
         raise SafetyError('起飞/稳定悬停等待超时，不发送规划目标；请飞手接管')
 
-    def handoff(self, goal_pub):
+    def request_landing(self, takeoff_pub):
+        from quadrotor_msgs.msg import TakeoffLand
+        fcu, _, ctrl = self.live()
+        if not fcu.armed or fcu.mode != 'OFFBOARD' or ctrl.state not in (HOVER, COMMAND):
+            raise SafetyError('未运动但已退出自动控制；不抢占飞手，不发送降落')
+        if self.landing_requested:
+            raise SafetyError('降落已请求，不自动重试')
+        if takeoff_pub.get_num_connections() < 1:
+            raise SafetyError('降落发布连接丢失，请飞手接管')
+        message = TakeoffLand()
+        message.takeoff_land_cmd = TakeoffLand.LAND
+        self.landing_requested = True
+        takeoff_pub.publish(message)
+        self.ros.logerr('航点后3秒内水平位移未达到%.3fm：已发送一次LAND；请监护并准备RC接管',
+                        self.args.min_goal_motion)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            fcu, _, ctrl = self.live()
+            if not fcu.armed or fcu.mode != 'OFFBOARD':
+                raise SafetyError('降落确认期间退出armed+OFFBOARD；停止自动操作，请飞手判断')
+            if ctrl.state == LANDING:
+                self.ros.logwarn('已确认AUTO_LAND(5)，不等于已经落地；继续监护。脚本不直接解锁/停桨')
+                return
+            if ctrl.state not in (HOVER, COMMAND):
+                raise SafetyError('降落确认期间控制状态改变；不重试，请飞手接管')
+            self.sleep(0.05)
+        raise SafetyError('LAND已发出但2秒内未确认AUTO_LAND；检查PX4Ctrl是否重新编译并重启，请飞手接管')
+
+    def monitor_goal(self, start, sent, takeoff_pub):
+        handoff_confirmed = False
+        max_motion = 0.0
+        while time.monotonic() - sent < 10.0:
+            fcu, odom, ctrl = self.live()
+            if not fcu.armed or fcu.mode != 'OFFBOARD' or ctrl.state not in (HOVER, COMMAND):
+                raise SafetyError('目标监护期间退出悬停/指令控制；不抢占飞手，不自动降落')
+            position, _ = pose(odom)
+            max_motion = max(max_motion, math.dist(position[:2], start[:2]))
+            if not handoff_confirmed and ctrl.state == COMMAND and self.mon.command_after(sent):
+                handoff_confirmed = True
+                self.ros.loginfo('交接确认：收到新的/setpoints_cmd，PX4Ctrl已进入CMD_CTRL(3)；继续监护真实位移')
+            if time.monotonic() - sent >= GOAL_MOTION_TIMEOUT:
+                if max_motion < self.args.min_goal_motion:
+                    self.request_landing(takeoff_pub)
+                    return
+                if handoff_confirmed:
+                    self.ros.loginfo('3秒初始位移检查通过：最大水平位移%.3fm；这不是到点或全程防卡死确认', max_motion)
+                    return
+            self.sleep(0.05)
+        raise SafetyError('10秒内未确认CMD_CTRL。目标已发送，不能认为已取消；请飞手接管')
+
+    def handoff(self, goal_pub, takeoff_pub):
         from geometry_msgs.msg import PoseStamped
         fcu, odom, ctrl = self.live()
         if ctrl.state != HOVER or not fcu.armed or fcu.mode != 'OFFBOARD':
@@ -276,15 +356,7 @@ class Sequencer:
         goal_pub.publish(msg)  # Exactly one goal; never repeat/retry on failure.
         self.goal_sent = True
         self.ros.loginfo('已发送一次/goal=(%.3f,%.3f,%.3f)，偏移使用world/EKF轴，不是机头方向', *target)
-        while time.monotonic()-sent < 10:
-            fcu, _, ctrl = self.live()
-            if not fcu.armed or fcu.mode != 'OFFBOARD' or ctrl.state not in (HOVER, COMMAND):
-                raise SafetyError('交接期间退出悬停/指令控制，请飞手接管')
-            if ctrl.state == COMMAND and self.mon.command_after(sent):
-                self.ros.loginfo('交接确认：收到新的/setpoints_cmd，PX4Ctrl已进入CMD_CTRL(3)')
-                return
-            self.sleep(0.05)
-        raise SafetyError('10秒内未确认CMD_CTRL。目标已发送，可能仍在规划，不能认为任务自动取消；请飞手接管')
+        self.monitor_goal(p, sent, takeoff_pub)
 
     def run(self):
         self.sleep(3.0)  # Collect a real sample window; no publisher in check-only mode.
@@ -295,6 +367,7 @@ class Sequencer:
         if not self.args.map_verified:
             raise SafetyError('地图未确认：先解决空地有方块问题，再使用--map-verified明确确认')
         print('\n警告：接下来PX4Ctrl可能自动解锁并起飞，稳定悬停后自动发送一次短距离规划目标。\n'
+              '航点后3秒无足够水平位移将请求降落；请确认正下方可安全降落。\n'
               '请确认场地无人、地图正确、遥控器接管可用。脚本退出不代表飞机停止。', flush=True)
         if input('确实允许本次飞行请输入 TAKEOFF：').strip() != 'TAKEOFF':
             raise SafetyError('操作者取消，没有发送起飞')
@@ -318,8 +391,11 @@ class Sequencer:
         if self.args.takeoff_only:
             self.ros.logwarn('按--takeoff-only结束：保持悬停，不给规划目标；降落由飞手负责')
             return
-        self.handoff(goal_pub)
-        self.ros.logwarn('脚本结束。轨迹服务器与PX4Ctrl继续运行；这不是到点/降落确认。请继续监护。')
+        self.handoff(goal_pub, takeoff_pub)
+        if self.landing_requested:
+            self.ros.logwarn('脚本结束：已确认AUTO_LAND，但尚未确认落地；请继续监护，准备RC接管')
+        else:
+            self.ros.logwarn('脚本结束。轨迹服务器与PX4Ctrl继续运行；这不是到点/降落确认。请继续监护。')
 
 
 def parser():
@@ -331,17 +407,21 @@ def parser():
     p.add_argument('--goal-dy', type=float, default=0.0, help='world Y偏移，默认0m；非机体系')
     p.add_argument('--hover-seconds', type=float, default=3.0, help='连续稳定悬停时间，至少3秒')
     p.add_argument('--takeoff-timeout', type=float, default=60.0, help='起飞等待超时秒数，范围15~120')
+    p.add_argument('--min-goal-motion', type=float, default=0.05,
+                   help='航点后3秒内最小水平位移，默认0.05m，范围0.03~0.10；不足则请求降落')
     return p
 
 
 def main():
     p = parser()
     args = p.parse_args()
-    if (not finite((args.goal_dx, args.goal_dy, args.hover_seconds, args.takeoff_timeout))
-            or not 0.1 <= math.hypot(args.goal_dx, args.goal_dy) <= 2.0
+    if (not finite((args.goal_dx, args.goal_dy, args.hover_seconds, args.takeoff_timeout,
+                    args.min_goal_motion))
+            or not 0.1 <= math.hypot(args.goal_dx, args.goal_dy) <= 5.0
             or not 3 <= args.hover_seconds <= 30
-            or not 15 <= args.takeoff_timeout <= 120):
-        p.error('目标水平距离需0.1~2m，稳定时间3~30秒，起飞超时15~120秒，数值必须有限')
+            or not 15 <= args.takeoff_timeout <= 120
+            or not 0.03 <= args.min_goal_motion <= min(0.10, math.hypot(args.goal_dx, args.goal_dy) / 2)):
+        p.error('目标距离0.1~2m，稳定时间3~30秒，起飞超时15~120秒；位移阈值0.03~0.10m且不超过目标距离一半，数值必须有限')
     try:
         import rospy
         from quadrotor_msgs.msg import Px4ctrlState  # Require the current built interface.
@@ -356,10 +436,11 @@ def main():
     except (SafetyError, EOFError, KeyboardInterrupt, rospy.ROSInterruptException) as e:
         rospy.logerr('流程停止：%s', e or '操作者中断')
         if runner.flight_requested:
-            rospy.logerr('起飞请求已发出！退出不会撤销起飞或规划轨迹，也不会自动降落/停桨。请立即判断并用RC接管。')
+            rospy.logerr('起飞请求已发出！退出不会撤销轨迹或再次补发降落/停桨；本次是否请求LAND=%s。请立即判断并用RC接管。',
+                         runner.landing_requested)
         return 1
     except Exception as e:
-        rospy.logerr('未预期异常：%s；若已起飞请立即用RC接管。脚本不会自动降落/停桨。', e)
+        rospy.logerr('未预期异常：%s；若已起飞请立即用RC接管，不会在异常中盲发降落/停桨。', e)
         return 1
 
 
