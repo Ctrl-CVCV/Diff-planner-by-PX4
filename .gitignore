@@ -70,7 +70,9 @@ core.[0-9]*
 *.p12
 *.pfx
 *.bak
+*.bak_*
 *.backup
+*.pre_calibration_*
 *.codex_backup_*
 *.swp
 *.swo
