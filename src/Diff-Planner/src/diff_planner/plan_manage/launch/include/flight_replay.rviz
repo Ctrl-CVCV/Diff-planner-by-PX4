@@ -1,0 +1,113 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: world
+    Frame Rate: 20
+  Displays:
+    - Class: rviz/Grid
+      Name: World Grid
+      Enabled: true
+      Cell Size: 0.5
+      Plane Cell Count: 30
+    - Class: rviz/Odometry
+      Name: EKF History
+      Enabled: true
+      Topic: /ekf/ekf_odom
+      Keep: 1000
+      Queue Size: 20
+      Position Tolerance: 0.02
+      Angle Tolerance: 0.1
+      Shape:
+        Value: Arrow
+        Color: 255; 170; 50
+        Alpha: 0.8
+        Shaft Length: 0.08
+        Shaft Radius: 0.008
+        Head Length: 0.035
+        Head Radius: 0.015
+    - Class: rviz/Pose
+      Name: Requested Goal
+      Enabled: true
+      Topic: /replay/goal
+      Queue Size: 10
+      Shape: Arrow
+      Color: 255; 80; 100
+      Alpha: 1
+      Shaft Length: 0.2
+      Shaft Radius: 0.015
+      Head Length: 0.08
+      Head Radius: 0.04
+    - Class: rviz/PointCloud2
+      Name: Registered Cloud
+      Enabled: true
+      Topic: /cloud_registered
+      Queue Size: 1
+      Style: Points
+      Size (Pixels): 2
+      Alpha: 0.5
+      Color Transformer: FlatColor
+      Color: 200; 200; 200
+    - Class: rviz/PointCloud2
+      Name: Occupancy Raw
+      Enabled: true
+      Topic: /drone_0_diff_planner_node/grid_map/occupancy
+      Queue Size: 1
+      Style: Points
+      Size (Pixels): 3
+      Alpha: 1
+      Color Transformer: FlatColor
+      Color: 255; 150; 40
+    - Class: rviz/PointCloud2
+      Name: Occupancy Inflated
+      Enabled: true
+      Topic: /drone_0_diff_planner_node/grid_map/occupancy_inflate
+      Queue Size: 1
+      Style: Points
+      Size (Pixels): 4
+      Alpha: 0.25
+      Color Transformer: FlatColor
+      Color: 60; 170; 255
+    - Class: rviz/Marker
+      Name: Global Reference
+      Enabled: true
+      Marker Topic: /drone_0_diff_planner_node/global_list
+      Queue Size: 10
+    - Class: rviz/Marker
+      Name: Optimized Trajectory
+      Enabled: true
+      Marker Topic: /drone_0_diff_planner_node/optimal_list
+      Queue Size: 10
+    - Class: rviz/Marker
+      Name: Failed Candidates
+      Enabled: false
+      Marker Topic: /drone_0_diff_planner_node/failed_list
+      Queue Size: 10
+    - Class: rviz/Marker
+      Name: A Star Search
+      Enabled: false
+      Marker Topic: /drone_0_diff_planner_node/a_star_list
+      Queue Size: 10
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/Measure
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 5
+      Focal Point:
+        X: -0.8
+        Y: 1
+        Z: 0.8
+      Pitch: 0.7
+      Yaw: 0.8
+Window Geometry:
+  Width: 1280
+  Height: 800
