@@ -23,6 +23,7 @@
 #include <message_filters/time_synchronizer.h>
 
 #include <plan_env/raycast.h>
+#include <plan_env/QueryOccupancy.h>
 
 #define logit(x) (log((x) / (1 - (x))))
 #define GRID_MAP_OBS_FLAG 32767
@@ -153,6 +154,10 @@ public:
   inline double getResolution();
   bool getOdomDepthTimeout() { return md_.flag_depth_odom_timeout_; }
 
+  // Exact occupancy query for external monitors (no effect on mapping).
+  bool queryOccupancy(plan_env::QueryOccupancy::Request &request,
+                      plan_env::QueryOccupancy::Response &response);
+
   typedef std::shared_ptr<GridMap> Ptr;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -231,6 +236,7 @@ private:
 
   ros::Subscriber indep_cloud_sub_, indep_odom_sub_, extrinsic_sub_;
   ros::Publisher map_pub_, map_inf_pub_;
+  ros::ServiceServer occupancy_query_srv_;
   ros::Timer occ_timer_, vis_timer_, fading_timer_;
 
   //

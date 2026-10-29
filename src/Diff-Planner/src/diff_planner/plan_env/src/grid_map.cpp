@@ -149,6 +149,8 @@ void GridMap::initMap(ros::NodeHandle &nh)
 
   map_pub_ = node_.advertise<sensor_msgs::PointCloud2>("grid_map/occupancy", 10);
   map_inf_pub_ = node_.advertise<sensor_msgs::PointCloud2>("grid_map/occupancy_inflate", 10);
+  occupancy_query_srv_ = node_.advertiseService("grid_map/query_occupancy",
+                                               &GridMap::queryOccupancy, this);
 
   md_.occ_need_update_ = false;
   md_.has_first_depth_ = false;
@@ -960,6 +962,7 @@ void GridMap::publishMap()
   sensor_msgs::PointCloud2 cloud_msg;
 
   pcl::toROSMsg(cloud, cloud_msg);
+  cloud_msg.header.stamp = ros::Time::now();
   map_pub_.publish(cloud_msg);
 }
 
@@ -994,6 +997,7 @@ void GridMap::publishMapInflate()
   sensor_msgs::PointCloud2 cloud_msg;
 
   pcl::toROSMsg(cloud, cloud_msg);
+  cloud_msg.header.stamp = ros::Time::now();
   map_inf_pub_.publish(cloud_msg);
 }
 
@@ -1089,4 +1093,19 @@ void GridMap::testIndexingCost()
   printf("iter=%d, t1-t0=%f, t2-t1=%f, t3-t2=%f, t4-t3=%f, t5-t4=%f, t6-t5=%f, t7-t6=%f, t8-t7=%f\n", n, (t1 - t0).toSec(), (t2 - t1).toSec(), (t3 - t2).toSec(), (t4 - t3).toSec(), (t5 - t4).toSec(), (t6 - t5).toSec(), (t7 - t6).toSec(), (t8 - t7).toSec());
   printf("globalIdx2InfBufIdx():%fns(1.88), globalIdx2Pos():%fns(0.70), pos2GlobalIdx():%fns(1.11), globalIdx2InfBufIdx(pos2GlobalIdx()):%fns(3.56), BufIdx2GlobalIdx():%fns(10.05)\n",
          ((t2 - t1) - (t1 - t0)).toSec() * 1e9 / n, ((t3 - t2) - (t1 - t0)).toSec() * 1e9 / n, ((t5 - t4) - (t4 - t3)).toSec() * 1e9 / n, ((t6 - t5) - (t4 - t3)).toSec() * 1e9 / n, ((t8 - t7) - (t7 - t6)).toSec() * 1e9 / n);
+}
+
+bool GridMap::queryOccupancy(plan_env::QueryOccupancy::Request &request,
+                             plan_env::QueryOccupancy::Response &response)
+{
+  const Eigen::Vector3d pos(request.position.x, request.position.y, request.position.z);
+
+  response.in_map = isInBuf(pos);
+  response.in_inflate_map = isInInfBuf(pos);
+
+  const int occupancy = getOccupancy(pos);
+  const int inflate_occupancy = getInflateOccupancy(pos);
+  response.occupancy = occupancy;  // -1 virtual wall, 0 free, 1 occupied
+  response.inflate_occupancy = inflate_occupancy < 0 ? -1 : (inflate_occupancy > 0 ? 1 : 0);
+  return true;
 }

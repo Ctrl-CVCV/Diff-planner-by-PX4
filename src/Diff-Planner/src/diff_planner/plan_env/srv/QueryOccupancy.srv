@@ -1,0 +1,6 @@
+geometry_msgs/Point position
+---
+bool in_map
+bool in_inflate_map
+int8 occupancy
+int8 inflate_occupancy
