@@ -41,6 +41,10 @@ void PX4CtrlFSM::process()
 	Controller_Output_t u;
 	Desired_State_t des(odom_data);
 	bool rotor_low_speed_during_land = false;
+	const bool landing_requested = param.takeoff_land.enable && takeoff_land_data.triggered &&
+		takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND &&
+		state_data.current_state.armed && state_data.current_state.mode == "OFFBOARD" &&
+		rc_data.is_command_mode && (param.takeoff_land.no_RC || rc_is_received(now_time));
 	
 	// STEP1: state machine runs
 	switch (state)
@@ -175,6 +179,12 @@ void PX4CtrlFSM::process()
 
 			ROS_WARN("[px4ctrl] AUTO_HOVER(L2) --> MANUAL_CTRL(L1)");
 		}
+		else if (landing_requested)
+		{
+			state = AUTO_LAND;
+			set_start_pose_for_takeoff_land(odom_data);
+			ROS_INFO("[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND");
+		}
 		else if (rc_data.is_command_mode && cmd_is_received(now_time))
 		{
 			if (state_data.current_state.mode == "OFFBOARD")
@@ -183,14 +193,6 @@ void PX4CtrlFSM::process()
 				des = get_cmd_des();
 				ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> CMD_CTRL(L3)\033[32m");
 			}
-		}
-		else if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
-		{
-
-			state = AUTO_LAND;
-			set_start_pose_for_takeoff_land(odom_data);
-
-			ROS_INFO("\033[32m[px4ctrl] AUTO_HOVER(L2) --> AUTO_LAND\033[32m");
 		}
 		else
 		{
@@ -219,6 +221,12 @@ void PX4CtrlFSM::process()
 
 			ROS_WARN("[px4ctrl] From CMD_CTRL(L3) to MANUAL_CTRL(L1)!");
 		}
+		else if (landing_requested)
+		{
+			state = AUTO_LAND;
+			set_start_pose_for_takeoff_land(odom_data);
+			ROS_WARN("[px4ctrl] CMD_CTRL(L3) --> AUTO_LAND; ignoring planner commands during landing");
+		}
 		else if (!rc_data.is_command_mode || !cmd_is_received(now_time))
 		{
 			state = AUTO_HOVER;
@@ -229,13 +237,6 @@ void PX4CtrlFSM::process()
 		else
 		{
 			des = get_cmd_des();
-		}
-
-		if (takeoff_land_data.triggered && takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND)
-		{
-			ROS_ERROR("[px4ctrl] Reject AUTO_LAND, which must be triggered in AUTO_HOVER. \
-					Stop sending control commands for longer than %fs to let px4ctrl return to AUTO_HOVER first.",
-					  param.msg_timeout.cmd);
 		}
 
 		break;

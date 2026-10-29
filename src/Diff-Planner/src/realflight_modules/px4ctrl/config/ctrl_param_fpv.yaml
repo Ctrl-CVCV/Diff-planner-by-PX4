@@ -6,7 +6,8 @@ mass        : 2.35 # kg
 gra         : 9.81 
 pose_solver : 0    # 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 200.0
-max_manual_vel: 1.0
+max_manual_vel: 0.30
+max_auto_vel: 0.50  # 自动飞行位置环逐轴速度钳位 (m/s)。2026-10-29 前这里是硬编码 1.0，约为标称 0.30m/s 的 3.3 倍
 max_angle: 20  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 21.0 # 6S battery
 

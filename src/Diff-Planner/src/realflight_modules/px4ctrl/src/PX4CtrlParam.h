@@ -71,6 +71,7 @@ public:
 	double max_angle;
 	double ctrl_freq_max;
 	double max_manual_vel;
+	double max_auto_vel; // 自动飞行（CMD_CTRL/AUTO_*）位置环的期望速度钳位，单位 m/s，逐轴
 	double low_voltage;
 
 	// bool print_dbg;

@@ -35,7 +35,13 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "gra", gra);
 	read_essential_param(nh, "ctrl_freq_max", ctrl_freq_max);
 	read_essential_param(nh, "max_manual_vel", max_manual_vel);
+	read_essential_param(nh, "max_auto_vel", max_auto_vel);
 	read_essential_param(nh, "max_angle", max_angle);
+	if (max_auto_vel <= 0.0)
+	{
+		ROS_ERROR("\"max_auto_vel\" must be positive, got %f. Automatic flight is refused.", max_auto_vel);
+	}
+
 	read_essential_param(nh, "low_voltage", low_voltage);
 
 	read_essential_param(nh, "rc_reverse/roll", rc_reverse.roll);

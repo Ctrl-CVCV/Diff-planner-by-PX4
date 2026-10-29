@@ -696,19 +696,24 @@ Eigen::Vector3d Controller::computePIDErrorAcc(
   // with a PID controller
   Eigen::Vector3d acc_error;
 
+  // The velocity clamp is the real speed ceiling of automatic flight: it must stay
+  // close to the trajectory feedforward, otherwise an estimator error turns into a
+  // saturated velocity command (see 2026-10-29 B->C runaway).
+  const double v_limit = param.max_auto_vel;
+
   // x acceleration
   double x_pos_error = std::isnan(des.p(0)) ? 0.0 : std::max(std::min(des.p(0) - odom.p(0), 1.0), -1.0);
-  double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error) - odom.v(0), 1.0), -1.0);
+  double x_vel_error = std::max(std::min((des.v(0) + Kp(0) * x_pos_error) - odom.v(0), v_limit), -v_limit);
   acc_error(0) = Kv(0) * x_vel_error;
 
   // y acceleration
   double y_pos_error = std::isnan(des.p(1)) ? 0.0 : std::max(std::min(des.p(1) - odom.p(1), 1.0), -1.0);
-  double y_vel_error = std::max(std::min((des.v(1) + Kp(1) * y_pos_error) - odom.v(1), 1.0), -1.0);
+  double y_vel_error = std::max(std::min((des.v(1) + Kp(1) * y_pos_error) - odom.v(1), v_limit), -v_limit);
   acc_error(1) = Kv(1) * y_vel_error;
 
   // z acceleration
   double z_pos_error = std::isnan(des.p(2)) ? 0.0 : std::max(std::min(des.p(2) - odom.p(2), 1.0), -1.0);
-  double z_vel_error = std::max(std::min((des.v(2) + Kp(2) * z_pos_error) - odom.v(2), 1.0), -1.0);
+  double z_vel_error = std::max(std::min((des.v(2) + Kp(2) * z_pos_error) - odom.v(2), v_limit), -v_limit);
   acc_error(2) = Kv(2) * z_vel_error;
 
   debug.des_v_x = (des.v(0) + Kp(0) * x_pos_error); //debug
