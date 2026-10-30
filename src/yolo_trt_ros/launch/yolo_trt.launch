@@ -9,6 +9,9 @@
   <arg name="image_topic" default="/usb_cam/image_raw"/>
   <arg name="engine_path" default="/home/nvidia/yolo/best.engine"/>
   <arg name="conf_thres" default="0.60"/>
+  <!-- Engine class ids: 0=xingren, 1=fire, 2=people. Display names are
+       comma-separated by class id. -->
+  <arg name="label_names" default="其它标识,危险品标识,救助人员"/>
   <arg name="nms_iou" default="0.60"/>
   <arg name="batch_timeout" default="0.1"/>
   <arg name="infer_threads" default="3"/>
@@ -39,6 +42,7 @@
     <param name="engine_path" value="$(arg engine_path)" type="str"/>
     <param name="image_topic" value="$(arg image_topic)" type="str"/>
     <param name="conf_thres" value="$(arg conf_thres)" type="double"/>
+    <param name="label_names" value="$(arg label_names)" type="str"/>
     <param name="nms_iou" value="$(arg nms_iou)" type="double"/>
     <param name="batch_timeout" value="$(arg batch_timeout)" type="double"/>
     <param name="infer_threads" value="$(arg infer_threads)" type="int"/>

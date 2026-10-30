@@ -17,6 +17,7 @@ import numpy as np
 import rospy
 import tensorrt as trt
 from cv_bridge import CvBridge
+from PIL import Image as PilImage, ImageDraw, ImageFont
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
@@ -64,6 +65,12 @@ _CLASS_COLORS = [
     (0, 165, 255),
     (255, 255, 0),
 ]
+_LABEL_FONT_CANDIDATES = (
+    ('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', 2),
+    ('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', 2),
+    ('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc', 0),
+)
+_LABEL_FONT_SIZE = 16
 
 
 def _cuda_check(status, action):
@@ -96,6 +103,32 @@ def _geometry(frame_shape, input_width, input_height):
     left = int(round(pad_width - 0.1))
     top = int(round(pad_height - 0.1))
     return ratio, left, top, resized_width, resized_height
+
+
+def _load_label_font():
+    for path, index in _LABEL_FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, _LABEL_FONT_SIZE, index=index)
+            except OSError:
+                continue
+    raise RuntimeError('no CJK font found; install fonts-noto-cjk')
+
+
+def _make_label_chip(text, background, foreground, font):
+    mask = PilImage.new('L', (len(text) * _LABEL_FONT_SIZE + 48,
+                              _LABEL_FONT_SIZE * 2 + 16), 0)
+    ImageDraw.Draw(mask).text((8, 8), text, font=font, fill=255)
+    box = mask.getbbox()
+    if box is None:
+        return None
+    pad_x, pad_y = 4, 2
+    width = box[2] - box[0] + 2 * pad_x
+    height = box[3] - box[1] + 2 * pad_y
+    chip = PilImage.new('RGB', (width, height), tuple(reversed(background)))
+    ImageDraw.Draw(chip).text((pad_x - box[0], pad_y - box[1]), text,
+                              font=font, fill=tuple(reversed(foreground)))
+    return np.asarray(chip)[:, :, ::-1].copy()
 
 
 def _suppress_overlaps(detections, threshold):
@@ -441,6 +474,18 @@ class YoloTrtNode(object):
 
         self.detector = YoloEngine(self.engine_path,
                                    context_count=self.infer_threads)
+        label_names = str(rospy.get_param(
+            '~label_names', '其它标识,危险品标识,救助人员'))
+        overrides = [name.strip() for name in label_names.split(',')
+                     if name.strip()]
+        for class_id in sorted(self.detector.labels):
+            if class_id < len(overrides):
+                self.detector.labels[class_id] = overrides[class_id]
+        self._label_font = _load_label_font()
+        self._label_chips = {}
+        rospy.loginfo('display labels: %s',
+                      ', '.join('%d=%s' % item
+                                for item in sorted(self.detector.labels.items())))
         if self.conf_thres < 0.25:
             rospy.logwarn('conf_thres %.2f is below the 0.25 threshold baked into '
                           'the exported engine; lower scores cannot be recovered',
@@ -697,6 +742,16 @@ class YoloTrtNode(object):
                       len(detections),
                       (' | ' + ' | '.join(summary)) if summary else '')
 
+    def _label_chip(self, text, color):
+        key = (text, color)
+        chip = self._label_chips.get(key)
+        if chip is None:
+            luminance = 0.114 * color[0] + 0.587 * color[1] + 0.299 * color[2]
+            text_color = (0, 0, 0) if luminance > 150 else (255, 255, 255)
+            chip = _make_label_chip(text, color, text_color, self._label_font)
+            self._label_chips[key] = chip
+        return chip
+
     def _annotate(self, frame, detections, batch_ms):
         canvas = frame.copy()
         height, width = canvas.shape[:2]
@@ -708,24 +763,24 @@ class YoloTrtNode(object):
             cv2.circle(canvas, (int(round(det['cx'])), int(round(det['cy']))),
                        3, color, -1)
             text = '%s %.0f%%' % (det['label'], det['confidence'] * 100.0)
-            (text_w, text_h), baseline = cv2.getTextSize(
-                text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            top = max(p1[1] - text_h - baseline - 4, 0)
-            cv2.rectangle(canvas, (p1[0], top),
-                          (p1[0] + text_w + 6, top + text_h + baseline + 4),
-                          color, -1)
-            luminance = 0.114 * color[0] + 0.587 * color[1] + 0.299 * color[2]
-            text_color = (0, 0, 0) if luminance > 150 else (255, 255, 255)
-            cv2.putText(canvas, text, (p1[0] + 3, top + text_h + 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1, cv2.LINE_AA)
+            chip = self._label_chip(text, color)
+            if chip is not None:
+                chip_height, chip_width = chip.shape[:2]
+                top = max(p1[1] - chip_height, 0)
+                left = max(p1[0], 0)
+                right = min(left + chip_width, width)
+                bottom = min(top + chip_height, height)
+                if right > left and bottom > top:
+                    canvas[top:bottom, left:right] = chip[:bottom - top,
+                                                          :right - left]
 
         lines = ['TensorRT %.1f FPS  batch %.1f ms'
                  % (self.engine_fps, batch_ms),
                  'camera %.1f  display %.1f  dets %d'
                  % (self.camera_fps, self.display_fps, len(detections))]
         for det in detections[:5]:
-            lines.append('%s %.2f  [%d,%d,%d,%d]  c=(%d,%d)'
-                         % (det['label'], det['confidence'],
+            lines.append('#%d %.2f  [%d,%d,%d,%d]  c=(%d,%d)'
+                         % (det['class_id'], det['confidence'],
                             int(round(det['x1'])), int(round(det['y1'])),
                             int(round(det['x2'])), int(round(det['y2'])),
                             int(round(det['cx'])), int(round(det['cy']))))
