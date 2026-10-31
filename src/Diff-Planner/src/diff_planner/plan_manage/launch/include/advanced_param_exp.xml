@@ -150,7 +150,8 @@
              值越小优化器越愿意拉长段时长，峰值速度下降。
              实测：10.0 时峰值 0.45–0.49；5.0 时仍有 |v|=0.552–0.557 超过 0.54 的验收线，
              被 checkDynamicFeasibility 连拒 11 次 → replan fail too much → 紧急停止，
-             才再降到 2.0（不改 vel_tolerance，验收线仍是 0.54）。
+             才再降到 2.0（当时未动 vel_tolerance，验收线仍是 0.54；当晚 2.0 仍测到 0.544 后才另行放宽，
+             见下方 vel_tolerance 注释）。
              本任务不追求高速：长时间悬停/低速投放更适合平缓轨迹。代价是每段更慢，任务总时长变长，
              需复核 planner_timeout(45s)、motion_timeout(3s) 是否仍够用；若 2.0 太慢仍可回到 3.0。
              注意：launch 参数只在启动时读取，改完必须重启 Planner 节点才生效
@@ -159,13 +160,20 @@
         <param name="optimization/obstacle_clearance_soft" value="0.4" type="double"/>
         <param name="optimization/swarm_clearance" value="0.15000000000000002" type="double"/> <!-- heterogeneous support: my required clearance -->
         <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
-        <param name="optimization/vel_tolerance" value="0.30" type="double"/> <!-- 检查上限 = max_vel + 此值 = 0.24 + 0.30 = 0.54。
+        <param name="optimization/vel_tolerance" value="0.32" type="double"/> <!-- 检查上限 = max_vel + 此值 = 0.24 + 0.32 = 0.56。
              weight_time=10 时的实测：优化器输出几乎不随 max_vel 变，max_vel=0.30 峰值 0.51–0.53，
              降到 0.24 后仍是 0.450–0.489（10-31 23:5x 两次连拒）。
              原因是时间代价把时长压短，速度罚只在超限一侧生效，均衡点自然比 max_vel 高 0.2 m/s 左右。
              所以容差必须覆盖这个系统性超调；真要压速度得改 weight_time，不是改 max_vel。
-             2026-10-31 晚 weight_time 5.0 时仍测到 0.552–0.557 > 0.54；处理方式是继续降 weight_time
-             到 2.0，本容差保持不变。**不要为了让轨迹通过而调大本值。** -->
+             2026-10-31 晚 weight_time 5.0 时仍测到 0.552–0.557 > 0.54，先降到 weight_time=2.0；
+             当晚 weight_time=2.0 下仍出现 |v|=0.544 > 0.54（Replan 连续 Success=no → 紧急停止），
+             2026-10-31 由飞手明确同意把本容差 0.30 → 0.32（验收线 0.56）。
+             为什么不放到更大：hybrid_mission.yaml 的 safety/max_command_speed=0.60 会把下发指令
+             速度超 0.60 判为"控制指令超限"并直接中止任务（比 Planner 拒绝更严重）。
+             验收线必须留在这条线以下，0.54 只有 0.544 这 0.004 的余量，0.56 给了约 3%、
+             同时离任务侧 0.60 还有 0.04（约 7%）。
+             本值只用于吸收优化器的系统性超调，**不是性能调节旋钮**：峰值继续贴着 0.56 时，
+             应回到 weight_time 压速，而不是接着抬本值；要抬到 0.60 以上必须先同时改任务侧限幅。 -->
         <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
         <param name="optimization/acc_tolerance" value="0.2" type="double"/>
         <param name="optimization/max_jer" value="$(arg max_jer)" type="double"/>
