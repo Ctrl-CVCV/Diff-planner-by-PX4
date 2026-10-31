@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>px4_servo</name>
+  <version>0.1.0</version>
+  <description>通过 MAV_CMD_DO_SET_ACTUATOR 驱动 PX4 AUX 输出上的舵机（默认 AUX6，2500us 推出物料）。</description>
+  <maintainer email="gcs@example.com">gcs</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+</package>

@@ -1,0 +1,33 @@
+<launch>
+  <!-- 通过 DO_SET_ACTUATOR 驱动 AUX 输出上的舵机。默认 AUX6：收起 500us，推出 1400us
+       （2026-10-31 实测行程，归一化 -0.1；不是区间上限 2500）。
+       飞控侧需配 PWM_AUX_MIN6=500 / MAX6=2500（中点 1500 由 min/max 决定，本固件无 TRIM6）
+       / DIS6=500 / FAIL6=500。 -->
+  <arg name="channel" default="6"/>
+  <arg name="param_prefix" default="PWM_AUX"/>
+  <arg name="rest_us" default="500.0"/>
+  <arg name="push_us" default="1400.0"/>
+  <!-- hold_s=0：推出后保持到下一次指令（本机投放任务要求推出去后不自动收回）。
+       需要推一下自动回位时改成 hold_s:=2.0 之类。 -->
+  <arg name="hold_s" default="0.0"/>
+  <arg name="publish_hz" default="5.0"/>
+  <arg name="arming_gate" default="any"/>
+  <arg name="shutdown_retract" default="false"/>
+  <arg name="dry_run" default="false"/>
+  <arg name="mavros_ns" default="/mavros"/>
+  <arg name="topic_prefix" default="/servo"/>
+
+  <node pkg="px4_servo" type="servo_aux_pwm.py" name="servo_aux_pwm" output="screen">
+    <param name="mavros_ns" value="$(arg mavros_ns)"/>
+    <param name="channel" value="$(arg channel)"/>
+    <param name="param_prefix" value="$(arg param_prefix)"/>
+    <param name="rest_us" value="$(arg rest_us)"/>
+    <param name="push_us" value="$(arg push_us)"/>
+    <param name="hold_s" value="$(arg hold_s)"/>
+    <param name="publish_hz" value="$(arg publish_hz)"/>
+    <param name="arming_gate" value="$(arg arming_gate)"/>
+    <param name="shutdown_retract" value="$(arg shutdown_retract)"/>
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="topic_prefix" value="$(arg topic_prefix)"/>
+  </node>
+</launch>
