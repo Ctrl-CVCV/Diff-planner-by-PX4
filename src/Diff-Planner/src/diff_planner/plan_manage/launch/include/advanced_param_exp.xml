@@ -146,10 +146,15 @@
         <param name="optimization/weight_swarm" value="10000.0" type="double"/>
         <param name="optimization/weight_feasibility" value="10000.0" type="double"/>
         <param name="optimization/weight_sqrvariance" value="10000.0" type="double"/>
-        <param name="optimization/weight_time" value="5.0" type="double"/> <!-- 2026-10-31：10.0 → 5.0。时间代价是 Σ(1/T)*weight_time，
-             值越小优化器越愿意拉长段时长，拐角峰值速度下降（实测 10.0 时峰值 0.45–0.49，始终贴 0.54 的验收线）。
+        <param name="optimization/weight_time" value="2.0" type="double"/> <!-- 2026-10-31：10.0 → 5.0 → 2.0。时间代价是 Σ(1/T)*weight_time，
+             值越小优化器越愿意拉长段时长，峰值速度下降。
+             实测：10.0 时峰值 0.45–0.49；5.0 时仍有 |v|=0.552–0.557 超过 0.54 的验收线，
+             被 checkDynamicFeasibility 连拒 11 次 → replan fail too much → 紧急停止，
+             才再降到 2.0（不改 vel_tolerance，验收线仍是 0.54）。
              本任务不追求高速：长时间悬停/低速投放更适合平缓轨迹。代价是每段更慢，任务总时长变长，
-             需复核 planner_timeout(45s)、motion_timeout(3s) 是否仍够用。 -->
+             需复核 planner_timeout(45s)、motion_timeout(3s) 是否仍够用；若 2.0 太慢仍可回到 3.0。
+             注意：launch 参数只在启动时读取，改完必须重启 Planner 节点才生效
+             （roslaunch 一次即可，用 rosparam get 核对实际加载值）。 -->
         <param name="optimization/obstacle_clearance" value="0.15" type="double"/>
         <param name="optimization/obstacle_clearance_soft" value="0.4" type="double"/>
         <param name="optimization/swarm_clearance" value="0.15000000000000002" type="double"/> <!-- heterogeneous support: my required clearance -->
@@ -159,7 +164,8 @@
              降到 0.24 后仍是 0.450–0.489（10-31 23:5x 两次连拒）。
              原因是时间代价把时长压短，速度罚只在超限一侧生效，均衡点自然比 max_vel 高 0.2 m/s 左右。
              所以容差必须覆盖这个系统性超调；真要压速度得改 weight_time，不是改 max_vel。
-             2026-10-31 起 weight_time=5.0，峰值预计下降，但尚无实测数据；在拿到新峰值前不要下调本容差。 -->
+             2026-10-31 晚 weight_time 5.0 时仍测到 0.552–0.557 > 0.54；处理方式是继续降 weight_time
+             到 2.0，本容差保持不变。**不要为了让轨迹通过而调大本值。** -->
         <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
         <param name="optimization/acc_tolerance" value="0.2" type="double"/>
         <param name="optimization/max_jer" value="$(arg max_jer)" type="double"/>
