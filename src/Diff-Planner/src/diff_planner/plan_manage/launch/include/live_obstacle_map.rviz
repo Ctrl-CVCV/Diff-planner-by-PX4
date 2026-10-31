@@ -15,22 +15,23 @@ Visualization Manager:
       Enabled: true
       Cell Size: 0.5
       Plane Cell Count: 30
-    - Class: rviz/Odometry
-      Name: EKF Position
+    # 实际飞行轨迹：由 flight_path.py 把 /ekf/ekf_odom 累积成 Path。
+    # 用连续线条显示，不再用里程计箭头（rviz/Odometry 只能画箭头/坐标轴）。
+    - Class: rviz/Path
+      Name: Flight Path (ekf_odom)
       Enabled: true
-      Topic: /ekf/ekf_odom
-      Keep: 100
-      Queue Size: 10
-      Position Tolerance: 0.02
-      Angle Tolerance: 0.1
-      Shape:
-        Value: Arrow
-        Color: 255; 220; 80
-        Alpha: 1
-        Shaft Length: 0.15
-        Shaft Radius: 0.01
-        Head Length: 0.06
-        Head Radius: 0.025
+      Topic: /ekf/flight_path
+      Queue Size: 2
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.03
+      Color: 255; 220; 80
+      Alpha: 1
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
     - Class: rviz/Marker
       Name: Position Occupancy Check
       Enabled: true

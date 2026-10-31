@@ -26,8 +26,14 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES diff_planner
- CATKIN_DEPENDS plan_env path_searching traj_opt traj_utils 
+ CATKIN_DEPENDS plan_env path_searching traj_opt traj_utils
 #  DEPENDS system_lib
+)
+
+# 只读的轨迹线发布节点（view_obstacle_map.launch 用 roslaunch 启动）
+catkin_install_python(PROGRAMS
+  scripts/flight_path.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 include_directories(

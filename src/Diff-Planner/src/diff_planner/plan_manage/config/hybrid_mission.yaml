@@ -7,16 +7,16 @@ controller_node: /px4ctrl
 points:
   A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
   B: {xyz: [1.75, 0.0, 0.8], yaw_deg: 0.0}
-  C: {xyz: [0.45, 1.37, 0.8],yaw_deg: 180.0}
-  D: {xyz: [0.02,1.38,0.8], yaw_deg: 180.0}
-  E: {xyz: [1.87, 2.75, 0.8], yaw_deg: 90.0, measured: true}
+  C: {xyz: [0.45,1.33, 0.80],yaw_deg: 180.0}
+  D: {xyz: [-0.01,1.35,0.8], yaw_deg: 180.0}
+  E: {xyz: [1.93, 2.68, 0.8], yaw_deg: 90.0, measured: true}
   # F 是 Planner → 直控的切换点：到点悬停 arrival_dwell 秒后切直控。实测后填坐标并把 measured 改成 true。
-  F: {xyz: [1.05, 2.75, 0.8], yaw_deg: 90.0, measured: true}
+  F: {xyz: [1.13, 2.70, 0.8], yaw_deg: 90.0, measured: true}
   # G、H 由普通 PX4Ctrl 直控，各自到点悬停 arrival_dwell 秒；实测后填坐标并改 measured。
-  G: {xyz: [2.65, 2.75, 0.8], yaw_deg: 90.0, measured: true}
-  H: {xyz: [1.96, 2.70, 0.8], yaw_deg: 90.0, measured: true}
-  # I 是终点：回到 A 正上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
-  I: {xyz: [0.0, 0.0, 0.8], yaw_deg: 180.0}
+  G: {xyz: [2.71, 2.68,0.8], yaw_deg: 90.0, measured: true}
+  H: {xyz: [1.93, 2.68, 0.8], yaw_deg: 180.0, measured: true}
+  # I 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
+  I: {xyz: [0.00, -1.00, 0.8], yaw_deg: 180.0}
 
 takeoff:
   height: 0.80
@@ -34,42 +34,104 @@ direct:
   min_duration: 3.0
   max_yaw_rate_deg: 25.0
 
+# 降落。PX4Ctrl 收到 LAND 时会把**那一刻的实测位姿**冻结成降落参考（x、y、yaw 固定，
+# z 按 0.15m/s 时序斜坡下降），所以真正决定落点的是"发 LAND 时的实测位置"，不是高度。
+# target_* 就是这条判据：比 safety/position_tolerance(0.10m)、arrival_speed(0.20m/s) 更紧。
+landing:
+  # 可选进近：>0 时先在位置控制下降到离地该高度再发 LAND，只缩短"冻结参考"被估计漂移
+  # 影响的窗口（0.8m→0.1m 约省 4.6s），默认关掉。
+  approach_height: 0.0
+  approach_speed: 0.15
+  approach_tolerance: 0.02
+  approach_timeout: 20.0
+  target_tolerance: 0.03
+  target_speed: 0.05
+  # 收不紧时的兜底：超过该时长就按当前位姿降落并告警，不无限等待。
+  target_timeout: 8.0
+  # 收尾判据：实测离地高度（/ekf/ekf_odom，相对起飞原点）≤ 该值即视为已在地面。
+  # 本机 PX4 没有外部定位融合，落地后 landed_state 可能长期停在 IN_AIR；此时 PX4Ctrl
+  # 自己的落地判据成立 5s 后会把控制交还飞手，任务脚本据此收尾并提示杀桨，
+  # 不再报"状态异常"。仍可正常解锁的事件流（PX4 报 ON_GROUND 并断桨）优先。
+  on_ground_height: 0.20
+
+# 危险品投放（2026-10-31 起默认启用）。开启后：在 hazard_drop/points 里的航点连续稳定悬停
+# hover_seconds 秒，且最近 vote_frames 帧的投票确认"危险品"时，先在位置控制下降到离地 height，
+# 调用 service（/servo/push，std_srvs/Trigger；本任务用 px4_servo 的 hold_s=0，推出后不自动收回），
+# 保持 push_wait 秒后爬回该航点高度继续任务。到点后最多等 wait_timeout 秒，超时只告警并继续任务，
+# 不中止飞行。height 以起飞原点为基准（与 landing/approach_height 同一基准）。启用时预检要求舵机
+# 服务可用，否则拒绝起飞——宁可地面报错，也不要飞完一圈才发现投放没发生。
+hazard_drop:
+  enabled: true             # true 时启用；也可用 --hazard-drop / --no-hazard-drop 覆盖
+  points: [C, D]            # 允许投放的航点；C、D 都在 0.8m 高度悬停
+  label: 危险品             # 检测标签按子串匹配；YOLO label_names 里叫 "危险品标识"
+  min_confidence: 0.70      # 单帧最低置信度（YOLO 节点自身已按 conf_thres=0.60 过滤）
+  # 单帧里可能出现多个图案：只认"离图像中心最近的那一个"（无人机悬在投放目标正上方），
+  # 再判它是不是 label、置信度够不够。是否确认真危险品由最近若干帧投票决定：
+  # 最近 vote_frames 帧里命中比例达到 vote_ratio 才算确认；中间偶发丢帧/误检不会打断，
+  # 但持续误检超过该比例仍会触发——阈值按现场检测抖动调整。
+  vote_frames: 15           # 参与投票的最近帧数（YOLO 约 10–30 FPS，15 帧 ≈ 0.5–1.5s）
+  vote_ratio: 0.60          # 命中比例阈值；例如 15 帧里至少 9 帧命中
+  hover_seconds: 3.0        # 到点后连续稳定悬停多久才允许下降（与 arrival_dwell 一致）
+  wait_timeout: 10.0        # 到点后最多等多久检测；超时告警并按原任务流继续
+  height: 0.15              # 下降到离地高度（米，相对起飞原点）
+  speed: 0.15               # 下降/爬升速度上限；不得大于 direct/max_speed
+  tolerance: 0.02           # 高度到位判据（实测 z ≤ 目标 z + 该值）
+  timeout: 20.0             # 单次下降或爬升超时；爬升超时按保护降落处理
+  push_wait: 2.5            # 推舵机后保持低空的时间，让载荷脱离；舵机本身不自动收回
+  max_age: 0.5              # 检测消息超过该时长没有更新，视为检测丢失
+  once: true                # 全程最多投放一次；false 时 C、D 两点都会各投一次
+  service: /servo/push
+
 mission:
   publish_hz: 50.0
   startup_timeout: 10.0
   planner_first_command_timeout: 2.0
   planner_timeout: 45.0
   direct_timeout: 30.0
+  # 到点后连续稳定悬停多久再发下一段。2026-10-31：C、D、E、F、G 要求悬停 3s，因此设为 3.0。
+  # 这个值同时作用于 B（B 不再是经过点，停下稳定后从静止规划 B→C，避免带着速度进 139°
+  # 折返导致优化器超速被拒而急停）；B 因此也是 3s。H 是经过点、不悬停；I 用下面 hover_seconds。
   arrival_dwell: 3.0
   hover_seconds: 3.0
   pass_radius: 0.30
   landing_ack_timeout: 2.0
-  landing_timeout: 25.0
+  # 2026-10-31 实测：PX4Ctrl 进入 AUTO_LAND 后要持续下沉到"期望高度比实测低 0.5m 且速度
+  # <0.1m/s 持续 3s"才判落地，随后还要等 PX4 确认 ON_GROUND（本机不报，最多再等 5s）。
+  # 这段在实测飞行里约 23s + 5s，25s 会先超时，因此放宽到 45s；只有实测仍不在地面才报超时。
+  landing_timeout: 45.0
+  # 规划段里"Planner 不再推进参考位置"的判据：planner_cmd 的参考位置在
+  # stalled_command_timeout 秒内前进不足 safety/motion_distance（0.04m）、且实测离目标超过
+  # safety/position_tolerance 时，按"Planner 只给静止指令"中止，并报出参考停在距目标多远。
+  # 区别于"参考在推进但飞机没跟上"（那仍由 safety/motion_timeout 位移看门狗负责）。
+  stalled_command_timeout: 2.0
 
 safety:
   position_tolerance: 0.10
   yaw_tolerance_deg: 10.0
   arrival_speed: 0.20
   telemetry_timeout: 0.30
+  # LIO /Odometry 是 10 Hz 话题，实测间隔中位数 0.098s、p99 0.204s、最大 0.346s，
+  # 不能套用 0.30s 的高频遥测超时：2026-10-29 起飞阶段因此误判 0.312s 断更而中止任务。
+  lio_timeout: 1.0
   fcu_timeout: 3.0
   rc_timeout: 0.50
   map_timeout: 2.0
-  planner_command_timeout: 0.25
+  planner_command_timeout: 1.00
   max_header_age: 0.30
   max_future_stamp: 0.05
   motion_timeout: 3.0
   motion_distance: 0.04
   max_tracking_error: 0.60
-  # 标准速度 0.30m/s：指令上限 0.45（Planner 接受上限 0.40），实测上限 0.65（PX4Ctrl 反馈钳位 0.50）。
+  # 规划速度 0.24m/s：Planner 接受上限 0.54（max_vel 0.24 + vel_tolerance 0.30，实测优化器峰值 0.49），
+  # 指令检查留余量到 0.60，实测上限 0.65（PX4Ctrl 反馈钳位 0.50）。
+  # 注意：max_command_speed 必须高于 Planner 的接受上限，否则 Planner 合格的轨迹会被任务脚本拦下。
   max_measured_speed: 0.65
-  max_command_speed: 0.45
+  max_command_speed: 0.60
   max_command_acceleration: 2.0
   max_command_jerk: 10.0
-  # 估计器健康：2026-10-29 B→C 失控时 /Odometry 延迟 0.9~1.2s（正常 0.05~0.15s），EKF 时间同步失效。
-  # 这重新启用了 2026-10-26 按使用者要求取消的 LIO header.stamp 检查，区别是必须持续超限
-  # lio_grace 秒才中止（单次抖动不会触发）。任一阈值填 0 即关闭该项检查。
-  max_lio_age: 0.30
-  lio_grace: 1.0
+  # 估计器健康：只看 EKF 与 LIO 的位置一致性。LIO header.stamp 不参与中止判定
+  # （2026-10-26 决定，2026-10-29 起飞阶段再次误判后确认删除），只保留接收超时 lio_timeout。
+  # max_ekf_lio_divergence 填 0 即关闭本项检查。
   max_ekf_lio_divergence: 0.35
   divergence_grace: 0.5
   preflight_estimator_seconds: 2.0
@@ -92,3 +154,6 @@ topics:
   stop: /mandatory_stop_to_planner
   land: /px4ctrl/takeoff_land
   status: /drone_0_mission/state
+  # YOLO 检测结果（std_msgs/String，JSON：detections[].label/confidence）。只有
+  # hazard_drop/enabled=true 时才订阅，默认任务流不碰这个话题。
+  detections: /yolo/detections

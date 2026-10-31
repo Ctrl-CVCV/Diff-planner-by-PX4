@@ -432,14 +432,13 @@ class RuntimeRules(unittest.TestCase):
         with self.assertRaisesRegex(mission.FlightError, 'pass_radius'):
             self.runner.preflight()
 
-    def test_preflight_rejects_stale_lio_before_takeoff(self):
+    def test_preflight_tolerates_stale_lio_stamp(self):
         self.prepare_preflight()
         self.runner.safety['preflight_estimator_seconds'] = 0.5
-        self.runner.get.return_value.header = SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: 999.6))
+        self.runner.get.return_value.header = SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: 999.27))
         with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic), \
                 mock.patch.object(mission.time, 'sleep', self.clock.sleep):
-            with self.assertRaisesRegex(mission.FlightError, '起飞前估计器不达标'):
-                self.runner.preflight()
+            self.runner.preflight()
         self.runner.publishers['land'].publish.assert_not_called()
 
     def test_preflight_rejects_diverged_ekf_before_takeoff(self):
@@ -589,18 +588,30 @@ class RuntimeRules(unittest.TestCase):
                 self.runner.health()
                 self.clock.now += step
 
-    def test_lio_latency_aborts_after_grace(self):
+    def test_lio_stamp_latency_never_aborts(self):
+        # 2026-10-29 起飞阶段因 0.73s 的 header 延迟误判中止；该判定已删除。
         entries = self.healthy_telemetry()
-        entries['lio'].header.stamp = SimpleNamespace(to_sec=lambda: 999.6)
-        with self.assertRaisesRegex(mission.FlightError, '激光里程计延迟'):
-            self.health_ticks(entries)
+        for stamp in (999.27, 990.0, 0.0, 1002.0):
+            with self.subTest(stamp=stamp):
+                entries['lio'].header.stamp = SimpleNamespace(to_sec=lambda: stamp)
+                self.health_ticks(entries, ticks=60)
 
-    def test_brief_lio_spike_is_graced_and_clears(self):
+    def test_lio_receive_timeout_tolerates_ten_hz_jitter(self):
         entries = self.healthy_telemetry()
-        entries['lio'].header.stamp = SimpleNamespace(to_sec=lambda: 999.6)
-        self.health_ticks(entries, ticks=10)
-        entries['lio'].header.stamp = SimpleNamespace(to_sec=lambda: 1000.0)
-        self.health_ticks(entries, ticks=40)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            for age in (0.312, 0.346, 0.6):
+                self.runner.data = {key: (value, self.clock.now) for key, value in entries.items()}
+                self.runner.data['lio'] = (entries['lio'], self.clock.now - age)
+                self.runner.health()
+                self.clock.now += 0.05
+
+    def test_lio_receive_timeout_aborts_on_real_dropout(self):
+        entries = self.healthy_telemetry()
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.runner.data = {key: (value, self.clock.now) for key, value in entries.items()}
+            self.runner.data['lio'] = (entries['lio'], self.clock.now - 1.2)
+            with self.assertRaisesRegex(mission.FlightError, 'lio 断更'):
+                self.runner.health()
 
     def test_ekf_lio_divergence_aborts_after_grace(self):
         entries = self.healthy_telemetry()
@@ -618,11 +629,9 @@ class RuntimeRules(unittest.TestCase):
         with self.assertRaisesRegex(mission.FlightError, '围栏'):
             self.health_ticks(entries, ticks=5)
 
-    def test_zero_limit_disables_lio_and_divergence_checks(self):
+    def test_zero_divergence_limit_disables_check(self):
         entries = self.healthy_telemetry()
-        entries['lio'].header.stamp = SimpleNamespace(to_sec=lambda: 999.0)
         entries['lio'].pose.pose.position.x = 0.9
-        self.runner.safety['max_lio_age'] = 0.0
         self.runner.safety['max_ekf_lio_divergence'] = 0.0
         self.health_ticks(entries, ticks=40)
 
@@ -677,6 +686,54 @@ class RuntimeRules(unittest.TestCase):
         self.assertFalse(self.runner.active)
         self.runner.publishers['command'].publish.assert_not_called()
 
+    def landing_stub(self, ctrl_state, height, origin=(10.0, -3.0, 0.034)):
+        """wait_landing 的假数据源：FCU 已解锁、PX4 一直报 IN_AIR、实测离地 height。"""
+        self.runner.active = True
+        self.runner.origin = origin
+        position = SimpleNamespace(x=origin[0], y=origin[1], z=origin[2] + height)
+        self.runner.get = mock.Mock(side_effect=lambda key, *args: {
+            'fcu': SimpleNamespace(connected=True, armed=True),
+            'extended': SimpleNamespace(landed_state=2),
+            'ctrl': SimpleNamespace(state=ctrl_state),
+            'odom': SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(position=position))),
+        }[key])
+        self.runner.health = mock.Mock()
+
+    def run_landing(self):
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', self.clock.sleep):
+            self.runner.wait_landing()
+
+    def test_landing_handover_on_ground_finishes_without_error(self):
+        """PX4Ctrl 交还飞手（PX4 一直不报 ON_GROUND）但实测已落地：收尾 DONE，提示杀桨。"""
+        self.landing_stub(ctrl_state=1, height=0.03)
+        self.run_landing()
+        self.assertEqual(self.runner.stage, 'DONE')
+        self.assertFalse(self.runner.active)
+        self.runner.publishers['command'].publish.assert_not_called()
+        self.runner.publishers['land'].publish.assert_not_called()
+        self.assertIn('杀桨', self.runner.ros.logwarn.call_args.args[0])
+
+    def test_landing_handover_in_air_still_requires_takeover(self):
+        """飞手空中接管也会进 MANUAL_CTRL；离地还很高时必须报错要求接管。"""
+        self.landing_stub(ctrl_state=1, height=0.50)
+        with self.assertRaisesRegex(mission.FlightError, '交还飞手'):
+            self.run_landing()
+        self.assertNotEqual(self.runner.stage, 'DONE')
+
+    def test_landing_timeout_on_ground_finishes_instead_of_error(self):
+        """超时时实测已在地面：不再报"降落超时"，收尾并提示杀桨。"""
+        self.landing_stub(ctrl_state=5, height=0.03)
+        self.run_landing()
+        self.assertEqual(self.runner.stage, 'DONE')
+        self.assertLess(self.clock.now - 100.0, self.config['mission']['landing_timeout'] + 1.0)
+        self.runner.health.assert_called()
+
+    def test_landing_timeout_in_air_still_errors(self):
+        self.landing_stub(ctrl_state=5, height=0.50)
+        with self.assertRaisesRegex(mission.FlightError, '降落超时'):
+            self.run_landing()
+
     def test_read_only_graph_requires_no_flight_publishers(self):
         self.runner.read_only = True
         topics = self.config['topics']
@@ -701,7 +758,7 @@ class RuntimeRules(unittest.TestCase):
         self.runner.publishers['land'].publish.assert_not_called()
         self.runner.publishers['command'].publish.assert_not_called()
 
-    def simulate_full_mission(self, respond_c=True, unfinished_c=False):
+    def simulate_full_mission(self, respond_c=True, unfinished_c=False, hazard=None):
         runner, clock = self.runner, self.clock
         self.simulate_takeoff(origin=(10, -3, 0.034))
         takeoff_health, takeoff_get = runner.health, runner.get
@@ -743,6 +800,12 @@ class RuntimeRules(unittest.TestCase):
             if planner_command[0] is not None:
                 planner_command[0].header.stamp = SimpleNamespace(to_sec=lambda: 1000.0)
                 runner.data['planner_cmd'] = (planner_command[0], clock.now)
+            if hazard:
+                # 只在悬停于该航点上方时喂检测结果，模拟相机始终能看到下方的危险品。
+                near = math.dist(state['position'], tuple(runner.config['points'][hazard]['xyz'])) <= 0.1
+                if near:
+                    runner.receive(SimpleNamespace(data=json.dumps(dict(
+                        count=1, detections=[dict(label='危险品标识', confidence=0.9)]))), 'detections')
             return state['position'], (0, 0, 0), state['yaw']
 
         def send_goal(label):
@@ -792,6 +855,7 @@ class RuntimeRules(unittest.TestCase):
         self.assertIn('PLANNER_F', phases)
         self.assertIn('PLANNER_I', phases)
         self.assertIn('HOLD', phases)
+        self.assertNotIn('DESCEND', phases, '默认 landing/approach_height=0：悬停到位后直接 LAND')
         self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
         f_index = phases.index('PLANNER_F')
         f_start = trace[f_index][0]
@@ -806,11 +870,13 @@ class RuntimeRules(unittest.TestCase):
         runner.wait_landing.assert_called_once()
         b_start = next(entry[0] for entry in trace if entry[1] == 'PLANNER_B')
         c_start = next(entry[0] for entry in trace if entry[1] == 'WAIT_PLANNER_C')
-        self.assertLess(c_start - b_start, self.config['mission']['arrival_dwell'],
-                        'B 只是经过点，不应等待悬停')
+        self.assertGreaterEqual(c_start - b_start, self.config['mission']['arrival_dwell'],
+                                'B 到点后应连续稳定悬停 arrival_dwell 秒，再从静止状态规划 C')
         hover_start = next(entry[0] for entry in trace if entry[1] == 'HOLD')
-        self.assertGreaterEqual(clock.now - hover_start, 3)
-        self.assertEqual(state['position'], tuple(runner.config['points']['I']['xyz']))
+        self.assertGreaterEqual(clock.now - hover_start, self.config['mission']['hover_seconds'],
+                                'I 点必须先连续稳定悬停 hover_seconds 才允许降落')
+        self.assertEqual(state['position'], tuple(runner.config['points']['I']['xyz']),
+                         '默认不进近：发 LAND 时飞机就在 I 点，PX4Ctrl 以该位姿为落点参考')
         self.assertAlmostEqual(state['yaw'], math.pi)
         tolerance = math.radians(self.config['safety']['yaw_tolerance_deg'])
         planner_outputs = [entry[2] for entry in trace if entry[1] == 'PLANNER_B']
@@ -827,19 +893,90 @@ class RuntimeRules(unittest.TestCase):
         direct_outputs = [entry[2] for entry in trace if entry[1] == 'DIRECT']
         self.assertLessEqual(max(abs(command.yaw_dot) for command in direct_outputs),
                              math.radians(self.config['direct']['max_yaw_rate_deg']) + 1e-8)
-        # C→D、F→G、G→H 三段直控都应在到点时给出目标点位置
+        # C→D、F→G 直接到点悬停；G→H 之后 H 只是经过点，不再进入 DWELL。
         visited = {mission.vector(entry[2].position) for entry in trace if entry[1] == 'DWELL'}
-        for label in ('D', 'G', 'H'):
-            self.assertIn(tuple(runner.config['points'][label]['xyz']), visited)
+        self.assertEqual(visited, {tuple(runner.config['points'][label]['xyz']) for label in ('D', 'G')})
         d_outputs = [entry[2] for entry in trace if entry[1] == 'DWELL']
         self.assertLessEqual(abs(mission.wrap(d_outputs[0].yaw + math.pi / 2)), tolerance,
                              'D 的直控段结束时应保持模拟配置的 -90°')
+        # H 是经过点：进入 pass_radius 就发 I 目标，且切换那一刻还没飞到 H。
+        i_start = next(entry[0] for entry in trace if entry[1] == 'WAIT_PLANNER_I')
+        i_position = next(entry[2] for entry in trace if entry[1] == 'WAIT_PLANNER_I')
+        h_xyz = tuple(runner.config['points']['H']['xyz'])
+        self.assertLessEqual(math.dist(mission.vector(i_position.position), h_xyz),
+                             self.config['mission']['pass_radius'] + 1e-6)
+        self.assertNotIn('DWELL', [entry[1] for entry in trace if entry[0] >= i_start])
         for label in ('E', 'F', 'I'):
             outputs = [entry[2] for entry in trace if entry[1] == 'PLANNER_' + label]
             self.assertLessEqual(math.dist(mission.vector(outputs[-1].position),
                                            tuple(runner.config['points'][label]['xyz'])),
                                  self.config['safety']['position_tolerance'],
                                  '%s 段最后一个 Planner 指令应在目标点附近' % label)
+
+    def test_landing_approach_is_off_by_default(self):
+        self.assertEqual(self.config['landing']['approach_height'], 0.0,
+                         '交接结论：落点精度取决于发 LAND 时的实测位姿，不取决于触发高度')
+        runner, clock = self.runner, self.clock
+        state, trace, goals = self.simulate_full_mission()
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+        self.assertNotIn('DESCEND', [entry[1] for entry in trace], 'approach_height=0 时不应有进近段')
+        self.assertEqual(runner.stage, 'LANDING')
+        runner.wait_landing.assert_called_once()
+
+    def test_landing_waits_for_tight_reference_then_lands_anyway(self):
+        runner, clock = self.runner, self.clock
+        state, trace, goals = self.simulate_full_mission()
+        landing = runner.config['landing']
+        # 恒定 6cm 水平残差：满足 safety/position_tolerance(0.10m)，但不满足落点参考判据(0.03m)。
+        original = runner.publishers['command'].publish.side_effect
+
+        def publish(command):
+            original(command)
+            if runner.stage == 'HOLD':
+                state['position'] = (state['position'][0] + 0.06, state['position'][1], state['position'][2])
+        runner.publishers['command'].publish.side_effect = publish
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+        hover_start = next(entry[0] for entry in trace if entry[1] == 'HOLD')
+        self.assertGreaterEqual(clock.now - hover_start,
+                                self.config['mission']['hover_seconds'] + landing['target_timeout'] - 1e-6,
+                                '落点参考没收敛时应等满 target_timeout 再降落，而不是立刻降落')
+        self.assertEqual(runner.stage, 'LANDING', '收不紧也必须降落，不能停在空中等')
+        self.assertEqual(runner.publishers['land'].publish.call_args.args[0].takeoff_land_cmd, Landing.LAND)
+        runner.wait_landing.assert_called_once()
+
+    def test_landing_reference_converged_lands_right_after_hover(self):
+        runner, clock = self.runner, self.clock
+        state, trace, goals = self.simulate_full_mission()
+        landing = runner.config['landing']
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+        hover_start = next(entry[0] for entry in trace if entry[1] == 'HOLD')
+        self.assertLess(clock.now - hover_start,
+                        self.config['mission']['hover_seconds'] + landing['target_timeout'],
+                        '落点参考已经收敛时不应空等 target_timeout')
+
+    def test_landing_approach_stops_when_ground_is_higher_than_expected(self):
+        runner, clock = self.runner, self.clock
+        state, trace, goals = self.simulate_full_mission()
+        runner.config['landing']['approach_height'] = 0.10
+        # 地面比 EKF 记录的起飞原点高 0.12m：实测高度提前低于目标，必须就地交给 PX4Ctrl，不能继续下压。
+        real_ground = [runner.origin[2] + 0.12]
+        original = runner.publishers['command'].publish.side_effect
+
+        def publish(command):
+            original(command)
+            if runner.stage == 'DESCEND':
+                state['position'] = (state['position'][0], state['position'][1],
+                                     max(state['position'][2], real_ground[0]))
+        runner.publishers['command'].publish.side_effect = publish
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+        self.assertEqual(runner.stage, 'LANDING')
+        self.assertGreaterEqual(state['position'][2], real_ground[0] - 1e-9,
+                                '进近不得把飞机压到实际地面以下')
+        runner.wait_landing.assert_called_once()
 
     def test_old_b_hold_does_not_acknowledge_c_and_times_out_safely(self):
         runner, clock = self.runner, self.clock
@@ -862,13 +999,222 @@ class RuntimeRules(unittest.TestCase):
     def test_direct_handoff_requires_planner_c_endpoint_hold(self):
         runner, clock = self.runner, self.clock
         _, trace, goals = self.simulate_full_mission(unfinished_c=True)
-        runner.settings['planner_timeout'] = 5.0
+        # B 段包含 arrival_dwell(3s) 悬停，5s 会在 B 就先超时，测不到 C；留足 B 的时间。
+        runner.settings['planner_timeout'] = 10.0
         with mock.patch.object(mission.time, 'monotonic', clock.monotonic), mock.patch.object(mission.time, 'sleep', clock.sleep):
             with self.assertRaisesRegex(mission.FlightError, '到达 C 超时'):
                 runner.run()
         self.assertEqual(goals, ['B', 'C'])
         self.assertNotIn('DIRECT', [entry[1] for entry in trace])
         runner.publishers['stop'].publish.assert_not_called()
+
+
+class HazardDrop(unittest.TestCase):
+    """危险品投放：实机配置默认开启（可用 --no-hazard-drop 关）；只在 C/D 稳定悬停且稳定检测到时下降并推舵机。"""
+
+    setUp = RuntimeRules.setUp
+    simulate_takeoff = RuntimeRules.simulate_takeoff
+    simulate_full_mission = RuntimeRules.simulate_full_mission
+
+    def run_mission(self):
+        runner, clock = self.runner, self.clock
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+
+    def drop_config(self):
+        return self.runner.config['hazard_drop']
+
+    def enable_drop(self, **changes):
+        # simulate_takeoff 会用 resolve_config(source_config) 重建 runner.config，
+        # 所以三份配置都要改，否则开关会在起飞时被 deepcopy 覆盖回 false。
+        for config in (self.config, self.runner.config, self.runner.source_config):
+            config['hazard_drop']['enabled'] = True
+            config['hazard_drop'].update(changes)
+
+    def test_shipped_config_enables_drop(self):
+        self.assertTrue(self.config['hazard_drop']['enabled'],
+                        '2026-10-31 起实机任务默认启用投放；临时关闭用 --no-hazard-drop')
+
+    def test_disabled_ignores_detections(self):
+        runner, clock = self.runner, self.clock
+        # 显式改配置关闭（等价于 --no-hazard-drop），而不是依赖出厂默认值。
+        for config in (self.config, self.runner.config, self.runner.source_config):
+            config['hazard_drop']['enabled'] = False
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        state, trace, _ = self.simulate_full_mission(hazard='C')
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertNotIn('DROP_DESCEND', phases)
+        self.assertNotIn('DROP_PUSH', phases)
+        runner.begin_push.assert_not_called()
+        self.assertEqual(runner.stage, 'LANDING')
+
+    def test_detection_at_c_descends_pushes_and_climbs_back(self):
+        runner, clock = self.runner, self.clock
+        self.enable_drop()
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        state, trace, goals = self.simulate_full_mission(hazard='C')
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertIn('DROP_DESCEND', phases)
+        self.assertIn('DROP_PUSH', phases)
+        self.assertIn('DROP_ASCEND', phases, '投放后必须爬回航点高度再继续任务')
+        runner.begin_push.assert_called_once()
+        # 下降目标 = 起飞原点 + hazard_drop/height，不压到地面以下。
+        floor = runner.origin[2] + self.drop_config()['height']
+        lowest = min(mission.vector(entry[2].position)[2] for entry in trace
+                     if entry[1] in ('DROP_DESCEND', 'DROP_PUSH'))
+        self.assertAlmostEqual(lowest, floor, places=2)
+        # 爬回后 C→D 直控段从 C 的高度开始，而不是从投放低空开始。
+        ascend_end = max(index for index, entry in enumerate(trace) if entry[1] == 'DROP_ASCEND')
+        resumed = next(entry for entry in trace[ascend_end:] if entry[1] == 'DIRECT')
+        self.assertAlmostEqual(mission.vector(resumed[2].position)[2],
+                               self.config['points']['C']['xyz'][2] + runner.origin[2], places=2)
+        # 投放仍然完成整条任务并降落。
+        self.assertIn('PLANNER_E', phases)
+        self.assertIn('PLANNER_I', phases)
+        self.assertEqual(runner.stage, 'LANDING')
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        # 必须先连续稳定悬停 hover_seconds 才允许下降。
+        arrival = next(entry[0] for entry in trace
+                       if entry[1] == 'PLANNER_C'
+                       and math.dist(mission.vector(entry[2].position),
+                                     tuple(runner.config['points']['C']['xyz'])) <= 0.1)
+        drop_start = next(entry[0] for entry in trace if entry[1] == 'DROP_DESCEND')
+        self.assertGreaterEqual(drop_start - arrival,
+                                self.drop_config()['hover_seconds'] - 1e-6,
+                                '悬停不足 hover_seconds 就下降了')
+
+    def test_detection_at_d_drops_from_direct_dwell(self):
+        runner, clock = self.runner, self.clock
+        self.enable_drop()
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        state, trace, goals = self.simulate_full_mission(hazard='D')
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertIn('DWELL', phases)
+        self.assertIn('DROP_DESCEND', phases, 'D 是直控段到点后的 DWELL，也必须支持投放')
+        runner.begin_push.assert_called_once()
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(runner.stage, 'LANDING')
+
+    def test_no_detection_waits_then_continues_without_dropping(self):
+        runner, clock = self.runner, self.clock
+        self.enable_drop()
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        state, trace, goals = self.simulate_full_mission()
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertNotIn('DROP_DESCEND', phases)
+        runner.begin_push.assert_not_called()
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'], '检测不到时必须继续整条任务')
+        self.assertEqual(runner.stage, 'LANDING')
+        # C 点按 wait_timeout 等满后继续，而不是立刻离开或永久悬停。
+        first_c = next(entry[0] for entry in trace if entry[1] == 'PLANNER_C')
+        after_c = next(entry[0] for entry in trace if entry[0] > first_c and entry[1] == 'DIRECT')
+        self.assertGreaterEqual(after_c - first_c, self.drop_config()['wait_timeout'])
+
+    def feed(self, detections, width=640, height=480):
+        payload = dict(image_width=width, image_height=height,
+                       count=len(detections), detections=detections)
+        self.runner.receive(SimpleNamespace(data=json.dumps(payload)), 'detections')
+
+    def last_vote(self):
+        return list(self.runner.hazard_votes)[-1][1]
+
+    def test_center_target_and_frame_vote_decide_hazard(self):
+        runner = self.runner
+        values = runner.drop_settings()
+        centered = dict(label='危险品标识', confidence=0.9, cx=330.0, cy=230.0,
+                        x1=300.0, y1=200.0, x2=360.0, y2=260.0)
+        edge = dict(label='危险品标识', confidence=0.9, cx=40.0, cy=40.0,
+                    x1=10.0, y1=10.0, x2=70.0, y2=70.0)
+        person = dict(label='救助人员', confidence=0.95, cx=320.0, cy=240.0,
+                      x1=290.0, y1=210.0, x2=350.0, y2=270.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            # 两个框时只认离图像中心最近的那个：中心是救助人员 → 不算危险品帧。
+            self.feed([person, edge])
+            self.assertFalse(self.last_vote(), '边缘的危险品框不应压过中心目标')
+            # 危险品在中心、别的框在边缘 → 算命中。
+            self.feed([centered, dict(person, cx=40.0, cy=40.0)])
+            self.assertTrue(self.last_vote(), '中心目标才是投放对象')
+            # 中心危险品但置信度不足 → 不命中。
+            self.feed([dict(centered, confidence=0.2)])
+            self.assertFalse(self.last_vote(), '置信度不足不算命中')
+            # 坏消息按未命中参与投票，不抛异常。
+            runner.receive(SimpleNamespace(data='not json'), 'detections')
+            self.assertFalse(self.last_vote(), '坏消息按未检测处理')
+
+            # 投票：帧数不足不确认；比例不足不确认；比例达标才确认。
+            frames = values['vote_frames']
+            runner.hazard_votes.clear()
+            for _ in range(frames - 1):
+                self.feed([centered])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '帧数不足还不能确认')
+            for _ in range(int(frames * (1.0 - values['vote_ratio'])) + 1):
+                self.feed([person])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '命中比例不足不能确认')
+            for _ in range(frames):
+                self.feed([centered])
+            self.assertTrue(runner.hazard_stable(self.clock.now, values), '命中比例达标后确认')
+            # 检测断更（超过 max_age 没有新帧）→ 不能确认。
+            self.assertFalse(runner.hazard_stable(self.clock.now + values['max_age'] * 2.0, values))
+
+    def test_once_drops_at_most_one_point(self):
+        runner = self.runner
+        self.enable_drop()
+        frames = runner.drop_settings()['vote_frames']
+        runner.hazard_votes = [(104.0, True)] * frames
+        runner.hazard_last = 104.9
+        self.assertEqual(runner.drop_decision(105.0, 'C', 99.0), 'drop')
+        runner.drop_done = True
+        self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'continue',
+                         'once=true 时第二次到点不再投放')
+        self.drop_config()['once'] = False
+        self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'drop')
+
+    def test_drop_settings_reject_unsafe_values(self):
+        runner = self.runner
+        self.drop_config()['points'] = ['C', 'E']
+        with self.assertRaisesRegex(mission.FlightError, '只允许 C/D'):
+            runner.drop_settings()
+        self.drop_config()['points'] = ['C', 'D']
+        self.drop_config()['height'] = self.config['takeoff']['height']
+        with self.assertRaisesRegex(mission.FlightError, 'height'):
+            runner.drop_settings()
+        self.drop_config()['height'] = 0.15
+        self.drop_config()['speed'] = self.config['direct']['max_speed'] + 0.1
+        with self.assertRaisesRegex(mission.FlightError, 'speed'):
+            runner.drop_settings()
+
+    def test_servo_push_reports_failure_without_raising(self):
+        try:
+            from std_srvs.srv import Trigger  # noqa: F401
+        except ImportError:
+            self.skipTest('std_srvs 不可用')
+        runner = self.runner
+        runner.ros.wait_for_service.side_effect = RuntimeError('service down')
+        ok, message = runner.servo_push()
+        self.assertFalse(ok)
+        self.assertIn('service down', message)
+        runner.ros.wait_for_service.side_effect = None
+        runner.ros.ServiceProxy.return_value.return_value = SimpleNamespace(success=False, message='PX4 未就绪')
+        ok, message = runner.servo_push()
+        self.assertFalse(ok, '服务拒绝时返回失败而不是抛异常')
+        self.assertEqual(message, 'PX4 未就绪')
+
+    def test_begin_push_returns_immediately_and_backfills_outcome(self):
+        import time as wall
+        runner = self.runner
+        runner.servo_push = mock.Mock(return_value=(True, '2500 us'))
+        started = wall.monotonic()
+        outcome = runner.begin_push()
+        self.assertLess(wall.monotonic() - started, 0.5, '推舵机不能同步阻塞位置指令循环')
+        deadline = wall.monotonic() + 2.0
+        while outcome['ok'] is None and wall.monotonic() < deadline:
+            wall.sleep(0.01)
+        self.assertTrue(outcome['ok'], '后台线程应把服务结果回填到 outcome')
 
 
 if __name__ == '__main__':
