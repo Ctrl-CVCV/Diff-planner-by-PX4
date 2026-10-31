@@ -32,6 +32,24 @@ Visualization Manager:
         X: 0
         Y: 0
         Z: 0
+    # 指令轨迹：由 flight_path.py 把 /setpoints_cmd 累积成 Path，绿色。
+    # 从 flight_path 节点启动（即 Diff-Planner 启动）开始一直累积到降落，
+    # 包含 Planner 段和直控段；不是"只显示当前这一段"的 optimal_list Marker。
+    - Class: rviz/Path
+      Name: Commanded Path (setpoints_cmd)
+      Enabled: true
+      Topic: /commanded_path
+      Queue Size: 2
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.02
+      Color: 60; 230; 90
+      Alpha: 1
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
     - Class: rviz/Marker
       Name: Position Occupancy Check
       Enabled: true

@@ -1,14 +1,19 @@
 <launch>
     <!-- 实时观看障碍地图：启动只读的轨迹线发布节点 + RViz。
-         轨迹线由 /ekf/ekf_odom 累积而来（不改变任何飞行参数）；
-         旧 bag 回放时同样可以先起本节点，再回放 bag。 -->
+         两条线都从本节点启动时开始累积、一直画到降落，不止当前一段：
+           /ekf/flight_path  —— 实测轨迹（/ekf/ekf_odom 累积，黄色）
+           /commanded_path   —— 指令轨迹（/setpoints_cmd 累积，绿色；含 Planner 与直控段）
+         不改变任何飞行参数；旧 bag 回放时同样可以先起本节点，再回放 bag。 -->
     <arg name="odom_topic" default="/ekf/ekf_odom"/>
     <arg name="path_topic" default="/ekf/flight_path"/>
+    <arg name="command_topic" default="/setpoints_cmd"/>
+    <arg name="command_path_topic" default="/commanded_path"/>
     <arg name="rviz_config" default="$(find diff_planner)/launch/include/live_obstacle_map.rviz"/>
     <arg name="start_rviz" default="true"/>
 
     <node pkg="diff_planner" type="flight_path.py" name="flight_path" output="screen"
-          args="--odom $(arg odom_topic) --topic $(arg path_topic)"/>
+          args="--odom $(arg odom_topic) --topic $(arg path_topic)
+                --ref $(arg command_topic) --ref-topic $(arg command_path_topic)"/>
 
     <node pkg="rviz" type="rviz" name="live_obstacle_map" output="screen"
           args="-d $(arg rviz_config)" if="$(arg start_rviz)"/>

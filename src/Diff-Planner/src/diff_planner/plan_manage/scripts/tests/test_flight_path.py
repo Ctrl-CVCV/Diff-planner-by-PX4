@@ -5,7 +5,7 @@ import os
 import sys
 import unittest
 
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Point, Pose
 from rospy import Time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,6 +47,18 @@ class PathAccumulatorTest(unittest.TestCase):
             flight_path.PathAccumulator(min_distance=-1.0, max_points=10)
         with self.assertRaises(ValueError):
             flight_path.PathAccumulator(min_distance=0.0, max_points=1)
+
+
+class PoseFromPositionTest(unittest.TestCase):
+
+    def test_copies_position_and_uses_identity_orientation(self):
+        point = Point()
+        point.x, point.y, point.z = 1.0, -2.0, 0.8
+        pose = flight_path.pose_from_position(point)
+        self.assertAlmostEqual(pose.position.x, 1.0)
+        self.assertAlmostEqual(pose.position.y, -2.0)
+        self.assertAlmostEqual(pose.position.z, 0.8)
+        self.assertAlmostEqual(pose.orientation.w, 1.0)
 
 
 if __name__ == '__main__':

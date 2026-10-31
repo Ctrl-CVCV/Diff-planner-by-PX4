@@ -119,7 +119,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/record_di
 roslaunch diff_planner view_obstacle_map.launch
 ```
 
-这个 launch 同时起两个东西：`flight_path.py`（只读，把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path`）和 RViz。第一次用要先编一次以安装脚本：`cd ~/gcs_ws && catkin_make -j2`。只想看图、不想让 launch 起 RViz 时用 `start_rviz:=false`，自己再 `rviz -d`；但那样不会有轨迹线。
+这个 launch 同时起两个东西：`flight_path.py`（只读，把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 实测轨迹，把 `/setpoints_cmd` 累积成 `/commanded_path` 指令轨迹）和 RViz。第一次用要先编一次以安装脚本：`cd ~/gcs_ws && catkin_make -j2`。只想看图、不想让 launch 起 RViz 时用 `start_rviz:=false`，自己再 `rviz -d`；但那样不会有轨迹线。两条线都从节点启动时开始累积，一直画到降落。
 
 确认 `Global Options → Fixed Frame = world`，然后看这些显示：
 
@@ -128,6 +128,7 @@ roslaunch diff_planner view_obstacle_map.launch
 | `Occupancy Raw` | `/drone_0_diff_planner_node/grid_map/occupancy` | 橙色，未膨胀障碍 |
 | `Occupancy Inflated` | `/drone_0_diff_planner_node/grid_map/occupancy_inflate` | 半透明蓝，膨胀障碍 |
 | `Flight Path (ekf_odom)` | `/ekf/flight_path` | 黄色连续线条，实际飞行轨迹（不再用里程计箭头） |
+| `Commanded Path (setpoints_cmd)` | `/commanded_path` | 绿色连续线条，指令轨迹（Planner + 直控段，从启动累积到降落） |
 | `Registered Cloud` | `/cloud_registered` | 灰色点云，默认关闭，需真实 TF |
 
 交替开关 RAW / Inflated，从俯视和侧视检查起飞竖直通道、各 Planner 段与直控段的可用性，以及 I 下方降落区；膨胀地图不应把悬停点或目标包住。地图不在视野内时调 `Views → Current → Focal Point` 到 EKF 的 world 坐标，**不要改 frame 或发假 TF** 把它拉回屏幕。
@@ -146,7 +147,6 @@ roslaunch diff_planner view_obstacle_map.launch
 启动（MAVROS 已由第 1 步起来；只在地面、拆桨或载荷已固定的状态下启动）：
 
 ```bash
-source ~/gcs_ws/devel/setup.bash
 roslaunch px4_servo servo_aux_pwm.launch
 ```
 

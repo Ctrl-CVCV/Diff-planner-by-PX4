@@ -132,13 +132,14 @@ source ~/gcs_ws/devel/setup.bash
 roslaunch diff_planner view_obstacle_map.launch
 ```
 
-该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 连续轨迹线）和 RViz；第一次使用先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本。只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时轨迹线没有数据。此配置 `Fixed Frame=world`，只有观察/测量工具，没有 `2D Nav Goal` 或初始位姿发布工具，不会发送起飞、航点或控制消息。
+该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 实测轨迹线，把 `/setpoints_cmd` 累积成 `/commanded_path` 指令轨迹线）和 RViz；第一次使用先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本。只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时轨迹线没有数据。两条线都从 `flight_path` 节点启动时开始累积、一直画到降落，不是只显示当前一段。此配置 `Fixed Frame=world`，只有观察/测量工具，没有 `2D Nav Goal` 或初始位姿发布工具，不会发送起飞、航点或控制消息。
 
 | 显示名称 / 颜色 | 话题 | 含义 |
 |---|---|---|
 | Occupancy Raw / 橙色 | `/drone_0_diff_planner_node/grid_map/occupancy` | 未膨胀的占据栅格中心，不是雷达原始点云 |
 | Occupancy Inflated / 半透明蓝色 | `/drone_0_diff_planner_node/grid_map/occupancy_inflate` | 膨胀后的占据栅格中心 |
 | Flight Path (ekf_odom) / 黄色线条 | `/ekf/flight_path` | 实际飞行轨迹（EKF 里程计累积）；不再用箭头表示里程计 |
+| Commanded Path (setpoints_cmd) / 绿色线条 | `/commanded_path` | 指令轨迹：Planner 段与直控段的位置指令累积，从节点启动到降落 |
 | Registered Cloud Optional TF Required / 灰色，默认关闭 | `/cloud_registered` | 配准点云；需要真实有效的坐标变换才能叠加 |
 
 先取消勾选蓝色图查看橙色障碍边界，再打开蓝色图观察膨胀范围；从俯视和侧视分别检查通道、地面与飞行高度。

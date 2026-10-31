@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Publish the flown trajectory as a nav_msgs/Path line for RViz.
+"""Publish accumulated trajectories as nav_msgs/Path lines for RViz.
 
-Subscribes to odometry (default ``/ekf/ekf_odom``), appends each pose farther
-than ``--min-distance`` from the previous one, and republishes the accumulated
-path at ``--publish-hz`` (latched, so a RViz opened later still shows the whole
-line). Older poses are dropped once ``--max-points`` is reached.
+Two independent streams:
+
+* flown path -- subscribes to odometry (default ``/ekf/ekf_odom``);
+* commanded path -- subscribes to the position command sent to the controller
+  (default ``/setpoints_cmd``, i.e. what traj_server/mission asked the drone to
+  fly, planner and direct-control legs alike).
+
+Each stream appends a pose whenever it is farther than ``--min-distance`` from
+the previous one and republishes the accumulated path at ``--publish-hz``
+(latched, so a RViz opened later still shows the whole line). The line starts
+when this node starts and keeps growing for the whole flight; older poses are
+dropped once ``--max-points`` is reached.
 
 Read-only: it never publishes flight commands and never changes any parameter.
 """
@@ -14,17 +22,24 @@ import math
 import sys
 
 import rospy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Pose, PoseStamped
 from nav_msgs.msg import Odometry, Path
+from quadrotor_msgs.msg import PositionCommand
 
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
-        description='把里程计累积成连续轨迹线发布给 RViz（只读，不发控制指令）')
-    parser.add_argument('--odom', default='/ekf/ekf_odom', help='里程计话题')
-    parser.add_argument('--topic', default='/ekf/flight_path', help='轨迹 nav_msgs/Path 话题')
+        description='把里程计和位置指令累积成连续轨迹线发布给 RViz（只读，不发控制指令）')
+    parser.add_argument('--odom', default='/ekf/ekf_odom', help='里程计话题（实测轨迹）')
+    parser.add_argument('--topic', default='/ekf/flight_path', help='实测轨迹 nav_msgs/Path 话题')
     parser.add_argument('--frame', default='',
-                        help='Path 坐标系；留空则跟随里程计 header.frame_id')
+                        help='实测轨迹坐标系；留空则跟随里程计 header.frame_id')
+    parser.add_argument('--ref', default='/setpoints_cmd',
+                        help='位置指令话题（quadrotor_msgs/PositionCommand，参考轨迹）；留空则关闭')
+    parser.add_argument('--ref-topic', default='/commanded_path',
+                        help='参考轨迹 nav_msgs/Path 话题')
+    parser.add_argument('--ref-frame', default='',
+                        help='参考轨迹坐标系；留空则跟随指令 header.frame_id，再退回 world')
     parser.add_argument('--min-distance', type=float, default=0.02,
                         help='相邻轨迹点的最小间距 m（防止原地抖动堆点）')
     parser.add_argument('--max-points', type=int, default=20000,
@@ -70,37 +85,82 @@ class PathAccumulator(object):
         return self._poses
 
 
+def pose_from_position(position):
+    """Build a Pose whose orientation is the identity for a bare Point."""
+    pose = Pose()
+    pose.position = position
+    pose.orientation.w = 1.0
+    return pose
+
+
+class PathStream(object):
+    """One accumulator plus its latched Path publisher."""
+
+    def __init__(self, accumulator, publisher):
+        self.acc = accumulator
+        self.publisher = publisher
+        self.dirty = False
+
+    def add(self, stamp, frame_id, pose):
+        if self.acc.add(stamp, frame_id, pose):
+            self.dirty = True
+
+    def publish_if_dirty(self, now):
+        if not self.dirty or not len(self.acc):
+            return
+        self.dirty = False
+        path = Path()
+        path.header.stamp = now
+        path.header.frame_id = self.acc.poses()[0].header.frame_id
+        path.poses = list(self.acc.poses())
+        self.publisher.publish(path)
+
+
 class FlightPath(object):
 
     def __init__(self, args):
-        self.acc = PathAccumulator(args.min_distance, args.max_points)
         self.frame_override = args.frame
-        self.dirty = False
-        self.publisher = rospy.Publisher(args.topic, Path, queue_size=1, latch=True)
-        self.subscriber = rospy.Subscriber(args.odom, Odometry, self.odom_cb, queue_size=20)
+        self.ref_frame_override = args.ref_frame
+        self.streams = []
+
+        self.odom_stream = self.make_stream(args.topic, args.min_distance, args.max_points)
+        self.odom_sub = rospy.Subscriber(args.odom, Odometry, self.odom_cb, queue_size=20)
+        rospy.loginfo('实测轨迹线：订阅 %s，累积后发布到 %s（间距 %.3fm，最多 %d 点）',
+                      args.odom, args.topic, args.min_distance, args.max_points)
+
+        self.ref_stream = None
+        if args.ref:
+            self.ref_stream = self.make_stream(args.ref_topic, args.min_distance, args.max_points)
+            self.ref_sub = rospy.Subscriber(args.ref, PositionCommand, self.ref_cb, queue_size=50)
+            rospy.loginfo('参考轨迹线：订阅 %s，累积后发布到 %s（从本节点启动开始累积）',
+                          args.ref, args.ref_topic)
+
         period = 1.0 / args.publish_hz if args.publish_hz > 0 else 0.5
         self.timer = rospy.Timer(rospy.Duration(period), self.timer_cb)
-        self.odom_topic = args.odom
-        self.topic = args.topic
-        rospy.loginfo('轨迹线：订阅 %s，累积后发布到 %s（间距 %.3fm，最多 %d 点）',
-                      args.odom, args.topic, args.min_distance, args.max_points)
+
+    def make_stream(self, topic, min_distance, max_points):
+        stream = PathStream(PathAccumulator(min_distance, max_points),
+                            rospy.Publisher(topic, Path, queue_size=1, latch=True))
+        self.streams.append(stream)
+        return stream
 
     def odom_cb(self, msg):
         frame = self.frame_override or msg.header.frame_id
         if not frame:
             return
-        if self.acc.add(msg.header.stamp, frame, msg.pose.pose):
-            self.dirty = True
+        self.odom_stream.add(msg.header.stamp, frame, msg.pose.pose)
+
+    def ref_cb(self, msg):
+        frame = self.ref_frame_override or msg.header.frame_id or self.frame_override or 'world'
+        stamp = msg.header.stamp
+        if stamp == rospy.Time(0):
+            stamp = rospy.Time.now()
+        self.ref_stream.add(stamp, frame, pose_from_position(msg.position))
 
     def timer_cb(self, _event):
-        if not self.dirty or not len(self.acc):
-            return
-        self.dirty = False
-        path = Path()
-        path.header.stamp = rospy.Time.now()
-        path.header.frame_id = self.acc.poses()[0].header.frame_id
-        path.poses = list(self.acc.poses())
-        self.publisher.publish(path)
+        now = rospy.Time.now()
+        for stream in self.streams:
+            stream.publish_if_dirty(now)
 
 
 def main(argv):

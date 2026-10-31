@@ -291,11 +291,13 @@ rviz -d "$HOME/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/launch/inclu
 | `Occupancy Raw` | `/drone_0_diff_planner_node/grid_map/occupancy` | 橙色，未膨胀占据障碍 |
 | `Occupancy Inflated` | `/drone_0_diff_planner_node/grid_map/occupancy_inflate` | 半透明蓝色，膨胀占据障碍 |
 | `Flight Path (ekf_odom)` | `/ekf/flight_path` | 黄色连续线条，实际飞行轨迹（不用里程计箭头） |
+| `Commanded Path (setpoints_cmd)` | `/commanded_path` | 绿色连续线条，指令轨迹（Planner + 直控段，从 `flight_path` 启动到降落） |
 | `Registered Cloud Optional TF Required` | `/cloud_registered` | 灰色注册点云，默认关闭，需要真实 TF 对齐 |
 
 观看方法：
 
 - 打开/关闭 `Occupancy Raw`、`Occupancy Inflated`，交替看原始与膨胀地图；从俯视和侧视检查实际障碍、地面及可用通道。
+- 黄色（实测）与绿色（指令）两条线的末端应基本重合；两条线的历史形状不同，说明指令与跟踪存在偏差（绿色是 Planner/任务发出的参考，黄色是 EKF 实测）。
 - 看轨迹线末端（当前 EKF 位置）与地图是否一致，确认 world X/Y 方向对应真实场地，而不是按机头猜方向。
 - 检查起飞竖直通道、A→B、B→C、D→E、E→F、H→I 规划区域、C→D、F→G、G→H 直控通道、I 下方降落区。膨胀地图不应把起飞悬停点或目标包在障碍里。
 - 灰色注册点云默认关闭。`/cloud_registered` 的 `camera_init` 与 `world` 若缺真实 TF，不要用随意的单位变换或改 frame_id 强行对齐；见[坐标链路核查](FRAME_TRANSFORM_AUDIT_20261020.md)。

@@ -207,6 +207,40 @@ Toolbars:
 Visualization Manager:
   Class: ""
   Displays:
+    # 完整轨迹线，由 flight_path.py（view_obstacle_map.launch 启动）生成：
+    #   Flight Path   —— /ekf/ekf_odom 累积的实测轨迹（黄色）
+    #   Commanded Path —— /setpoints_cmd 累积的指令轨迹（绿色，含 Planner 与直控段）
+    # 从该节点启动一直累积到降落，不再是 optimal_list 里"只有当前一段"的 Marker。
+    - Class: rviz/Path
+      Name: Flight Path (ekf_odom)
+      Enabled: true
+      Topic: /ekf/flight_path
+      Queue Size: 2
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.03
+      Color: 255; 220; 80
+      Alpha: 1
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+    - Class: rviz/Path
+      Name: Commanded Path (setpoints_cmd)
+      Enabled: true
+      Topic: /commanded_path
+      Queue Size: 2
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.02
+      Color: 60; 230; 90
+      Alpha: 1
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
     - Alpha: 1
       Class: rviz/Axes
       Enabled: true

@@ -290,11 +290,11 @@ source ~/gcs_ws/devel/setup.bash
 roslaunch diff_planner view_obstacle_map.launch
 ```
 
-该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 连续轨迹线）和 RViz，第一次使用需先 `catkin_make -j2` 安装脚本；只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时没有轨迹线。
+该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 实测轨迹线，把 `/setpoints_cmd` 累积成 `/commanded_path` 指令轨迹线）和 RViz，第一次使用需先 `catkin_make -j2` 安装脚本；只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时没有轨迹线。两条线都从节点启动时开始累积到降落，不是只显示当前一段。
 
 检查 A→B、B→C、D→E、E→F、H→I 地图、膨胀范围、坐标方向、C→D、F→G、G→H 直控通道和 I 下方降落区。地图消息新鲜不等于证明无障碍。
 
-以上命令不依赖 `FLIGHT_DIR`，不发目标或起飞。`Fixed Frame=world`，橙色 `Occupancy Raw` 是未膨胀图，半透明蓝色 `Occupancy Inflated` 是膨胀图，黄色 `Flight Path (ekf_odom)` 是实际飞行轨迹。完整的话题表、显示设置、无地图排查命令和隔离 bag 回放入口，见 [全流程手册第 7 节](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md#7-终端-5rviz-看实时地图和地面诊断)。
+以上命令不依赖 `FLIGHT_DIR`，不发目标或起飞。`Fixed Frame=world`，橙色 `Occupancy Raw` 是未膨胀图，半透明蓝色 `Occupancy Inflated` 是膨胀图，黄色 `Flight Path (ekf_odom)` 是实际飞行轨迹，绿色 `Commanded Path (setpoints_cmd)` 是 Planner/任务发出的指令轨迹。完整的话题表、显示设置、无地图排查命令和隔离 bag 回放入口，见 [全流程手册第 7 节](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md#7-终端-5rviz-看实时地图和地面诊断)。
 
 ### 4.4 地面未解锁时，只读检查程控起飞条件
 
