@@ -25,7 +25,7 @@ YOLO → /yolo/detections → hybrid_mission.py（判定危险品）→ /servo/p
 | 2 | PX4Ctrl | 第 2 步 | 落地锁桨后 |
 | 3 | 混合任务专用 Planner | 第 3 步 | 落地锁桨后 |
 | 4 | **录 bag（地图监视）** | 第 4 步，**执行任务之前** | 落地锁桨后再录 5～10 秒 |
-| 5 | RViz 实时看图 | 任意时刻，Planner 起来后 | 随时 |
+| 5 | RViz 实时看图（同时起 `flight_path.py`，轨迹线从这一刻开始累积） | 第 5 步，**起飞前** | 随时 |
 | 6 | `--check` 预检 → `--execute` 执行 | 第 6 步 | 到 DONE |
 | 7 | YOLO 视觉识别（可选，不参与飞行；会弹 `YOLO TensorRT` 预览窗口） | 第 7 步，地面插好相机后 | 随时，Ctrl+C 即停 |
 | 8 | 投放舵机 `px4_servo`（`/servo/push`，危险品投放默认开启，**必需**） | 第 6 步之前，MAVROS 起来后、地面启动 | 落地锁桨后 |
@@ -111,15 +111,34 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/record_di
 
 `RAW`/`INFLATE` 都应持续更新；`尚未收到` 不是空地图，先查地图发布，不能带着这个状态起飞。只打印"待执行命令"不等于已经开始录。
 
-## 第 5 步（终端 5）：RViz 看实时障碍地图
+## 第 5 步（终端 5）：RViz 看实时障碍地图与完整轨迹
 
-前提：第 1、3 步已在运行。命令不依赖 `FLIGHT_DIR`，不起飞、不发目标：
+前提：第 1、3 步已在运行。**必须在起飞前启动**——轨迹线只累积 `flight_path.py` 启动之后的点，起飞后再起，前面飞过的航段补不回来。命令不依赖 `FLIGHT_DIR`，不起飞、不发目标：
 
 ```bash
 roslaunch diff_planner view_obstacle_map.launch
 ```
 
-这个 launch 同时起两个东西：`flight_path.py`（只读，把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 实测轨迹，把 `/setpoints_cmd` 累积成 `/commanded_path` 指令轨迹）和 RViz。第一次用要先编一次以安装脚本：`cd ~/gcs_ws && catkin_make -j2`。只想看图、不想让 launch 起 RViz 时用 `start_rviz:=false`，自己再 `rviz -d`；但那样不会有轨迹线。两条线都从节点启动时开始累积，一直画到降落。
+这个 launch 起两个东西：`flight_path.py`（只读，不发控制指令；把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 黄色实测线，把 `/setpoints_cmd` 累积成 `/commanded_path` 绿色指令线）和 RViz。两条线都从节点启动时开始累积，一直画到降落，不是只显示当前一段。第一次用要先编一次以安装脚本：`cd ~/gcs_ws && catkin_make -j2`。
+
+已经有一个 RViz 开着、不想再弹窗口时：
+
+```bash
+roslaunch diff_planner view_obstacle_map.launch start_rviz:=false
+```
+
+然后在那个 RViz 里 `Add → Path`，Topic 分别填 `/ekf/flight_path`（实测）和 `/commanded_path`（指令）。注意：只 `rviz -d` 而不起这个 launch **不会有轨迹线**，线是 `flight_path.py` 发的，RViz 自己不会累积。
+
+起飞前核对节点和话题都在：
+
+```bash
+source ~/gcs_ws/devel/setup.bash
+rosnode list | grep flight_path                    # 必须有 /flight_path
+rostopic hz /ekf/ekf_odom                          # 没有发布者时黄线一定是空的，先查第 1 步的定位链
+rostopic echo -n 1 /ekf/flight_path | grep frame_id   # 应为 world
+```
+
+`/ekf/flight_path` 或 `/commanded_path` 查不到、或者起飞后一直没数据时，按顺序查：① `/flight_path` 节点有没有起；② `/ekf/ekf_odom` 有没有发布者（EKF 没起来，黄线永远不会有）；③ 显示项是否选对话题。Planner 自己的红色 `Optimized Trajectory` 和青色 `Global Reference` 是 Marker，每次重规划覆盖，只画当前一段，与这两条累积线不是一回事。
 
 确认 `Global Options → Fixed Frame = world`，然后看这些显示：
 
@@ -273,6 +292,7 @@ find "$FLIGHT_DIR/recording" -maxdepth 1 -name '*.active' -print
 - 危险品投放默认开启，**先起 `px4_servo` 再跑任务**；不投放就用 `--no-hazard-drop`，不要用 `retract` 或改 `hold_s` 去"关"它。
 - 舵机推出后按设计**不收回**；空中不要手调 `/servo/retract`、`/servo/set_pulse_us` 或重启舵机节点。
 - 实机 master 上**绝不** `rosbag play`；回放必须用独立 master（手册第 12 节）。
+- 要看完整轨迹线就在**起飞前**起第 5 步的 `view_obstacle_map.launch`（它带的 `flight_path.py` 才发线）；空中为补线重启节点没有意义，历史补不回来。
 - 空中不编译、不重启节点、不重跑任务、不改控制参数、不重置定位；新一轮只能在落地锁桨后准备。
 - 脚本退出、报错或 Ctrl+C **不等于**飞机停桨或降落；异常一律飞手立即接管，不靠脚本自己纠正。
 - 录包器退出不影响飞行安全，但不要在空中为补包重启控制/定位链。

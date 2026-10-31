@@ -274,7 +274,9 @@ source ~/gcs_ws/devel/setup.bash
 roslaunch diff_planner view_obstacle_map.launch
 ```
 
-该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path`）和 RViz，所以实际飞行轨迹会画成连续线条。第一次使用需先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本；只想单独启动 RViz 时用 `start_rviz:=false`，但那样不会出现轨迹线。
+该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path`，把 `/setpoints_cmd` 累积成 `/commanded_path`）和 RViz，所以实测与指令轨迹都会画成连续线条。第一次使用需先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本。**要在起飞前启动**：线只累积节点启动之后的点，空中再起补不回前面的航段。
+
+已经有 RViz 开着时用 `start_rviz:=false`，只起 `flight_path.py`，再在自己的 RViz 里 `Add → Path` 加 `/ekf/flight_path` 与 `/commanded_path` 两个显示。
 
 若要明确指定本工作区配置，也可以只启动 RViz，二者选一个（只启动 RViz 时没有轨迹线，除非另起 `flight_path.py`）：
 
