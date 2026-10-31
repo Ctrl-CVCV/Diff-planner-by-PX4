@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Keep PX4 MAVLink IMU-related message intervals at a requested rate.
+"""Request PX4 MAVLink IMU-related message intervals once per connection.
 
-PX4 does not persist MAV_CMD_SET_MESSAGE_INTERVAL across every reboot/reconnect.
-This ROS node reapplies the request whenever MAVROS reconnects and periodically
-while the link is up.  The requested rate is not a promise that the serial/USB
-link and PX4 can actually deliver that rate.
+The rate is set once, `apply_delay` seconds after MAVROS reports a connection;
+PX4 keeps the requested SET_MESSAGE_INTERVAL, so there is nothing to refresh
+while the link stays up (2026-10-31: the old 30 s periodic resend was pointless
+traffic).  A request is sent again only when MAVROS reconnects (new link, e.g.
+PX4 reboot) and, if `refresh_period` > 0, on that explicit period.
+
+The requested rate is not a promise that the serial/USB link and PX4 can
+actually deliver that rate.
 """
 
 import threading
@@ -26,7 +30,7 @@ class Px4ImuRateKeeper:
         self.message_ids = [int(value) for value in rospy.get_param(
             "~message_ids", DEFAULT_MESSAGE_IDS)]
         self.apply_delay = max(0.0, float(rospy.get_param("~apply_delay", 2.0)))
-        self.refresh_period = float(rospy.get_param("~refresh_period", 30.0))
+        self.refresh_period = float(rospy.get_param("~refresh_period", 0.0))
         self.service_timeout = max(0.1, float(rospy.get_param("~service_timeout", 5.0)))
 
         if self.rate_hz <= 0.0:
@@ -49,8 +53,8 @@ class Px4ImuRateKeeper:
                 rospy.Duration(self.refresh_period), self.refresh_cb)
 
         rospy.loginfo(
-            "PX4 IMU rate keeper ready: request=%.1f Hz, interval=%d us, "
-            "message_ids=%s, refresh=%.1f s",
+            "PX4 IMU rate setter ready: request=%.1f Hz, interval=%d us, "
+            "message_ids=%s, apply once per connection (periodic refresh=%.1f s)",
             self.rate_hz, self.interval_us, self.message_ids,
             self.refresh_period)
         rospy.logwarn(
@@ -129,7 +133,7 @@ class Px4ImuRateKeeper:
                     all_ok = False
 
             if all_ok:
-                rospy.loginfo("PX4 IMU-related rates refreshed (%s)", reason)
+                rospy.loginfo("PX4 IMU-related rates set (%s)", reason)
         finally:
             with self.lock:
                 self.applying = False

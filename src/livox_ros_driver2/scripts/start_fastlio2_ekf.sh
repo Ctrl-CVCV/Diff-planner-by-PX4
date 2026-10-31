@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click startup: PX4/MAVROS -> IMU rate keeper -> Livox MID360s driver
+# One-click startup: PX4/MAVROS -> IMU rate setter (once per connection) -> Livox MID360s driver
 #                    -> FAST-LIO2 (no RViz) -> EKF.
 #
 # This script intentionally does NOT start px4ctrl, arm the vehicle, or send any
@@ -32,7 +32,7 @@ usage() {
 默认启动：
   1. roscore（若尚未运行）
   2. MAVROS: ${FCU_URL}
-  3. PX4 IMU 频率保持节点: ${IMU_RATE} Hz
+  3. PX4 IMU 频率设置节点: ${IMU_RATE} Hz（每次连上飞控只设一次，不周期重发）
   4. Livox MID360s 驱动节点 /livox_lidar_publisher2
      并确认点云话题 /livox/lidar 有实际数据
   5. FAST-LIO2（不启动 RViz）

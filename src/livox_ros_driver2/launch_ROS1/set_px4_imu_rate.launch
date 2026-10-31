@@ -1,8 +1,13 @@
 <launch>
-  <!-- Requested rate only. The delivered rate may be lower because of PX4/link limits. -->
+  <!-- Requested rate only. The delivered rate may be lower because of PX4/link limits.
+
+       只在 MAVROS 连上飞控后设置一次（apply_delay 秒后）。PX4 会记住
+       SET_MESSAGE_INTERVAL 的结果，不需要周期性重发：refresh_period=0（默认）
+       表示不周期重发；只有 MAVROS 断开重连（例如飞控重启）时节点才会再设一次，
+       因为那是新的一条链路。 -->
   <arg name="rate_hz" default="500.0" />
   <arg name="apply_delay" default="2.0" />
-  <arg name="refresh_period" default="30.0" />
+  <arg name="refresh_period" default="0.0" />
 
   <node pkg="livox_ros_driver2"
         type="set_px4_mavlink_imu_rate.py"
