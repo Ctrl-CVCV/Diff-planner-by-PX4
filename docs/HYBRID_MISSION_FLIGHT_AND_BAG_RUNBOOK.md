@@ -1,16 +1,18 @@
-# 混合任务全流程：启动 EKF → 录 bag → 程控起飞 → B（经过点）/C → 直控 D → Planner E/F → 直控 G/H → Planner I → 降落与回放
+# 混合任务全流程：启动 EKF → 录 bag → 程控起飞 → B/C → 直控 D → Planner E/F → 直控 G → 经过 H → Planner I → 落点收敛判据后降落与回放
 
 更新：2026-10-28。适用本机 ROS 1 Noetic、`~/gcs_ws` 和当前 `hybrid_mission.py`。
 
+只想要启动 / 看 RViz / 录 bag 的命令清单，看 [混合任务最简步骤](HYBRID_MISSION_QUICKSTART.md)；本手册是完整操作与排查依据。
+
 **这是操作文档，不代表已经执行或验证过实机飞行。** 先完成地面检查；若仍存在起飞振荡、LIO/EKF 跳变或地图错位，不进入执行步骤。飞手必须全程能够立即用 RC 接管。
 
-本流程是：**A 地面原点 → 自动解锁、原地起飞 → 稳定悬停 3 秒 → Planner 经过 B（不悬停）→ Planner 到 C → 悬停 3 秒 → 纯 PX4Ctrl 到 D → 悬停 3 秒 → Planner 到 E → 悬停 3 秒 → Planner 到 F → 悬停 3 秒 → 纯 PX4Ctrl 到 G → 悬停 3 秒 → 纯 PX4Ctrl 到 H → 悬停 3 秒 → Planner 回 I（A 正上方，航向 180°）→ 悬停 3 秒 → 降落并确认锁桨**。不需要飞手先起飞，也不需要再运行旧起飞脚本。
+本流程是：**A 地面原点 → 自动解锁、原地起飞 → 稳定悬停 3 秒 → Planner 到 B → 悬停 3 秒 → Planner 到 C → 悬停 3 秒（投放默认启用时最长等 10 秒检测）→ 纯 PX4Ctrl 到 D → 悬停 3 秒 → Planner 到 E → 悬停 3 秒 → Planner 到 F → 悬停 3 秒 → 纯 PX4Ctrl 到 G → 悬停 3 秒 → 纯 PX4Ctrl 经过 H（不悬停）→ Planner 回 I（A 正上方，航向 180°）→ 悬停 3 秒并等落点参考收敛到 3 cm 以内 → 请求降落并确认锁桨**。不需要飞手先起飞，也不需要再运行旧起飞脚本。
 
-- B 是**经过点**：实测位置进入 `mission.pass_radius`（默认 0.30 米）就立即发 C 目标，不减速悬停、不做 3 秒计时。
+- B 自 2026-10-31 起**不再是经过点**：到点（含 Planner 终点零速保持）后连续稳定悬停 `mission.arrival_dwell`（3 秒），再从静止状态发 C 目标；B→C 是 139° 折返，带速度进弯会被优化器超速连拒。
 - F 是 Planner→直控的**切换点**：Planner 到点后同样连续稳定悬停 3 秒，再开始直控飞 G。
-- G、H 由普通 PX4Ctrl 直控，各自到点连续稳定 3 秒；H 之后重新交给 Planner 飞 I。
+- G 由普通 PX4Ctrl 直控，到点连续稳定悬停 3 秒；H 是**经过点**（进入 `pass_radius` 即发 I，不悬停），之后重新交给 Planner 飞 I。
 - I 是**终点**：相对 A 的 `[0,0,0.8]`（回到 A 正上方、保持飞行高度，**不要填 z=0 的地面点**），航向 180°、与起飞时相反；连续稳定 3 秒后自动降落。
-- F/G/H 目前是**未实测的占位点**（`measured: false`），脚本会拒绝 `--execute`，必须实地测量后填入坐标并改成 `measured: true`。
+- B/C/D/E/F/G/H/I 的 `measured` 标记以本轮 YAML 为准；任何 `measured: false` 的点都会让 `--execute` 被拒绝，必须实地测量后填入坐标并改成 `measured: true`。
 
 ## 1. 终端分工和绝对不能混用的内容
 
@@ -19,10 +21,12 @@
 | 0 | 创建本轮目录、检查/保存任务参数 | 准备完成即可 |
 | 1 | MAVROS、雷达、FAST-LIO2、EKF 一键启动 | 落地锁桨后 |
 | 2 | PX4Ctrl | 落地锁桨后 |
+| 2b | px4_servo（`/servo/push`；投放默认启用时必需） | 落地锁桨后 |
 | 3 | 混合任务专用 Planner/轨迹服务器 | 落地锁桨后 |
 | 4 | rosbag 录制与地图收包监视 | 落地锁桨后继续录 5～10 秒，再正常关闭 |
 | 5 | RViz 实时看图、只读检查 | 根据需要 |
 | 6 | 混合脚本预检、确认后执行 | 到 DONE（I 降落后）；异常时由飞手接管 |
+| 7 | YOLO 视觉识别（`yolo_trt_ros`；投放靠它出检测，未启动则不会投放） | 与飞行链无关，随时可停；见第 14 节 |
 
 所有实机终端必须连接同一个、已确认的实机 `ROS_MASTER_URI`；新开终端要重新 `source`，环境变量不会自动跨终端继承。
 
@@ -81,14 +85,14 @@ nano "$FLIGHT_DIR/mission.yaml"
 | 点 | 相对 A 的位置，米 | `yaw_deg` | 说明 |
 |---|---|---|---|
 | A | `[0.0, 0.0, 0.0]`，地面原点 | 0 | 起飞点 |
-| B | `[1.75, 0.0, 0.8]` | 0 | **Planner 经过点**，进入 `pass_radius` 即切 C，不悬停 |
+| B | `[1.75, 0.0, 0.8]` | 0 | Planner 到点，悬停 3 秒后再切 C（2026-10-31 起不再是经过点） |
 | C | `[0.44, 1.46, 0.8]` | 90 | Planner 到点，悬停 3 秒 |
 | D | `[0.04, 1.45, 0.8]` | 90 | PX4Ctrl 直控到点，悬停 3 秒 |
 | E | `[1.90, 2.77, 0.8]` | 90 | Planner 到点，悬停 3 秒 |
 | F | 待实测（占位，`measured: false`） | 待定 | Planner 到点，悬停 3 秒后切直控 |
 | G | 待实测（占位，`measured: false`） | 待定 | PX4Ctrl 直控到点，悬停 3 秒 |
 | H | 待实测（占位，`measured: false`） | 待定 | PX4Ctrl 直控到点，悬停 3 秒 |
-| I | `[0.0, 0.0, 0.8]`，回到 A 正上方 | 180 | Planner 到点，悬停 3 秒后自动降落 |
+| I | `[0.0, 0.0, 0.8]`，回到 A 正上方 | 180 | Planner 到点，悬停 3 秒后等落点参考收敛（`landing.target_tolerance` 0.03 m / `target_speed` 0.05 m/s）再降落 |
 
 - `coordinate_mode: takeoff_relative`：输入最终 `MISSION` 后，脚本再次检查并锁定地面 EKF 位置，作为 A。
 - 仅做坐标平移：`目标 world 坐标 = A 的实际 world 坐标 + 配置中的相对坐标`；不重置 EKF/TF。
@@ -98,7 +102,7 @@ nano "$FLIGHT_DIR/mission.yaml"
 - 核对 B/C/D/E/F/G/H/I、实际可飞区域、速度和到点容差。**I 下方必须能降落；起飞竖直通道和 C→D、F→G、G→H 不经过 Planner 避障。**
 - `mission.pass_radius` 是 B 的切换半径：太小会为了“碰到 B”而减速甚至停住，太大会提前切 C、实际轨迹更圆滑地切角。它必须小于起飞悬停点到 B 的距离，否则脚本预检直接报错（B 会被立即跳过）。
 - 任何尚未实测的航点都要保留 `measured: false`；脚本预览会打印警告，`--execute` 会被拒绝。这是防止用占位坐标实飞的硬保护，不要为了跑通而删掉。
-- `mission.arrival_dwell` 用于 C、D、E、F、G、H 的到点悬停；`mission.hover_seconds` 用于 I（最后一点）的悬停后降落。
+- `mission.arrival_dwell`（3 s）用于 B、C、D、E、F、G 的到点悬停（只有 H 是经过点，不计时）；`mission.hover_seconds` 用于 I（最后一点）的悬停；`landing.target_tolerance`（0.03 m）/ `target_speed`（0.05 m/s）是发 LAND 前的落点判据，`target_timeout`（8 s）是收不紧时的兜底；`landing.approach_height` / `approach_speed` / `approach_tolerance` / `approach_timeout` 是**默认关闭**的可选贴地进近，填 0 即不做进近（判据与原因见说明第 10 节）。`landing.on_ground_height`（0.20 m）是落地收尾判据：PX4 迟迟不报 `ON_GROUND` 时，PX4Ctrl 会在自身落地判据成立 5 s 后交还飞手，脚本据实测离地高度收尾并提示杀桨（判据与原因见说明第 10 节）。
 - I 的 z 必须填飞行高度（例如 0.8），不要填 `0`：`[0,0,0]` 是地面点，Planner 会把飞机规划到地面高度。
 - Planner 虚拟上下边界是绝对 world z，不随 A 平移。不要把相对飞行高度直接当作虚拟边界。
 - 2026-10-27 已从任务脚本移除坐标包围盒及虚拟上下边界预检；旧 YAML 的 `min_xyz`、`max_xyz`、`virtual_wall_margin` 会被忽略。Planner 本身的地图范围、虚拟墙和避障逻辑未修改，不代表任意目标都可达。I 若填 `[0,0,0]` 是地面点；要回到 A 上方 0.8 米悬停后降落，应填 `[0,0,0.8]`。
@@ -170,12 +174,27 @@ rostopic echo -n 1 /px4ctrl/state
 
 程控起飞要求 `enable: true`、`enable_auto_arm: true`、`no_RC: false`、`takeoff_height` 与本轮配置一致；仍须飞手监护，不是无遥控器自主飞行。
 
-## 5. 终端 3：启动混合任务专用 Planner
+## 4.1 终端 2b：启动舵机（危险品投放默认启用，必需）
+
+`hazard_drop/enabled` 自 2026-10-31 起为 `true`，任务预检会等 `/servo/push`，**舵机节点没起就拒绝起飞**。落地锁桨后再停。
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-export FLIGHT_DIR="$(cat "$HOME/flight_logs/current_hybrid_session.txt")"
-set -o pipefail
+roslaunch px4_servo servo_aux_pwm.launch
+```
+
+本 launch 默认 `hold_s=0.0`：舵机推出去后**保持不收回**，直到 `/servo/retract`、下一次动作指令或飞控上锁输出。检查终端核对：
+
+```bash
+rostopic echo -n 1 -p /servo/state
+rosservice call /servo/reload
+```
+
+自检行应显示 `区间 500..2500 us（中点 1500）... push 1400 us（归一化 -0.100）... rest 500 us`；`ready: true` 才能动作。上锁时舵机应停在收起位——若 `PWM_AUX_DIS6` 不是 500（本机曾读到 2500），先按 [px4_servo 说明](../src/px4_servo/README.md) 改参数，否则上锁会把舵机顶在推出位。不需要投放时用 `--no-hazard-drop` 执行任务，不必启动本节点。
+
+## 5. 终端 3：启动混合任务专用 Planner
+
+```bash
 roslaunch diff_planner run_exp_hybrid_mission.launch 
 ```
 
@@ -205,9 +224,10 @@ rosparam get /drone_0_diff_planner_node/grid_map
 ## 6. 终端 4：先开始录 bag，再执行任务
 
 ```bash
-
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/record_diff_planner_debug.py 
 ```
+
+必须显式给 `--output`：录包器**不读取** `FLIGHT_DIR` 环境变量，省略时会自己建 `~/flight_logs/<时间戳>_debug/`，第 11 节按 `$FLIGHT_DIR/recording/` 验收就会找不到文件。
 
 **不要事先 `mkdir "$FLIGHT_DIR/recording"`：录包器要求新目录，已有目录会拒绝覆盖。** 不用 `sudo`。之前出现 `/recording` 权限错误，是因为另一个终端没有设置 `FLIGHT_DIR`；本流程每个需要目录的终端都从同一会话文件读取。
 
@@ -251,10 +271,12 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/record_di
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"
+roslaunch diff_planner view_obstacle_map.launch
 ```
 
-若要明确指定本工作区配置，也可以将上面的 `rviz` 命令替换为以下命令，二者选一个：
+该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path`）和 RViz，所以实际飞行轨迹会画成连续线条。第一次使用需先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本；只想单独启动 RViz 时用 `start_rviz:=false`，但那样不会出现轨迹线。
+
+若要明确指定本工作区配置，也可以只启动 RViz，二者选一个（只启动 RViz 时没有轨迹线，除非另起 `flight_path.py`）：
 
 ```bash
 rviz -d "$HOME/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/launch/include/live_obstacle_map.rviz"
@@ -268,13 +290,13 @@ rviz -d "$HOME/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/launch/inclu
 |---|---|---|
 | `Occupancy Raw` | `/drone_0_diff_planner_node/grid_map/occupancy` | 橙色，未膨胀占据障碍 |
 | `Occupancy Inflated` | `/drone_0_diff_planner_node/grid_map/occupancy_inflate` | 半透明蓝色，膨胀占据障碍 |
-| `EKF Position` | `/ekf/ekf_odom` | 黄色，估计位置和姿态 |
+| `Flight Path (ekf_odom)` | `/ekf/flight_path` | 黄色连续线条，实际飞行轨迹（不用里程计箭头） |
 | `Registered Cloud Optional TF Required` | `/cloud_registered` | 灰色注册点云，默认关闭，需要真实 TF 对齐 |
 
 观看方法：
 
 - 打开/关闭 `Occupancy Raw`、`Occupancy Inflated`，交替看原始与膨胀地图；从俯视和侧视检查实际障碍、地面及可用通道。
-- 看 EKF 位置与地图是否一致，确认 world X/Y 方向对应真实场地，而不是按机头猜方向。
+- 看轨迹线末端（当前 EKF 位置）与地图是否一致，确认 world X/Y 方向对应真实场地，而不是按机头猜方向。
 - 检查起飞竖直通道、A→B、B→C、D→E、E→F、H→I 规划区域、C→D、F→G、G→H 直控通道、I 下方降落区。膨胀地图不应把起飞悬停点或目标包在障碍里。
 - 灰色注册点云默认关闭。`/cloud_registered` 的 `camera_init` 与 `world` 若缺真实 TF，不要用随意的单位变换或改 frame_id 强行对齐；见[坐标链路核查](FRAME_TRANSFORM_AUDIT_20261020.md)。
 - Points 显示尺寸不等于栅格分辨率。分辨率和膨胀以运行参数及实际地图为准，不能只按画面方块大小判断。
@@ -302,10 +324,7 @@ rostopic echo -n 1 /drone_0_diff_planner_node/grid_map/occupancy_inflate/header
 以下频率命令**逐条运行**，每条看数秒后 `Ctrl+C`，再运行下一条：
 
 ```bash
-rostopic hz /drone_0_diff_planner_node/grid_map/occupancy
-rostopic hz /drone_0_diff_planner_node/grid_map/occupancy_inflate
-rostopic hz /cloud_registered
-rostopic hz /ekf/ekf_odom
+rostopic echo /ekf/ekf_odom
 ```
 
 核对当前实际加载的分辨率、膨胀和坐标参数：
@@ -358,12 +377,10 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/check_dif
 如果在地面显示状态 2，也不能重复发起飞请求；先保持锁桨，按控制器流程恢复正确地面状态，并查明原因。
 
 ```bash
-source ~/gcs_ws/devel/setup.bash
-export FLIGHT_DIR="$(cat "$HOME/flight_logs/current_hybrid_session.txt")"
-set -o pipefail
+
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py \
-  --config "$FLIGHT_DIR/mission.yaml" --check \
-  2>&1 | tee "$FLIGHT_DIR/preflight_terminal.log"
+--check 
+
 ```
 
 `--check` 只订阅/查询，不注册飞行指令发布端，不起飞。查看输出的实际 A 原点和转换后的 hover/B/C/D/E/F/G/H/I **world 坐标**，与 RViz 一致后才继续；预检进程退出后再执行任务，不并行启动两份脚本。
@@ -406,7 +423,7 @@ TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B
 | 阶段 | 正常行为 |
 |---|---|
 | TAKEOFF / TAKEOFF_HOVER | 确认起飞状态、armed+OFFBOARD、IN_AIR，到 A 上方并稳定 3 秒 |
-| WAIT_PLANNER_B / PLANNER_B | 发一次 B 目标，收到有效规划指令后转发；B 是**经过点**，距离 ≤ `pass_radius` 就立刻发 C，不悬停 |
+| WAIT_PLANNER_B / PLANNER_B | 发一次 B 目标，收到有效规划指令后转发；B 到点后连续稳定悬停 3 秒，再发 C |
 | WAIT_PLANNER_C | 等 C 的新轨迹。等待期间继续转发上一段 B 轨迹（“桥接”），避免在切换点急停；不能用 B 末端保持冒充 C 轨迹 |
 | PLANNER_C | 转发 C 轨迹；到点后连续稳定 3 秒（`arrival_dwell`）再切直控 |
 | DIRECT（C→D） | Planner 不参与 C→D 轨迹，脚本向 PX4Ctrl 连续发平滑位置指令 |
@@ -414,9 +431,10 @@ TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B
 | WAIT_PLANNER_E / PLANNER_E | Planner 接管 D→E；要求新的轨迹 ID，旧轨迹不放行；E 到点稳定 3 秒 |
 | WAIT_PLANNER_F / PLANNER_F | Planner 接管 E→F；到点后连续稳定 3 秒，再切直控飞 G |
 | DIRECT（F→G）/ DWELL（G） | 直控到 G，连续稳定 3 秒后开始直控 H |
-| DIRECT（G→H）/ DWELL（H） | 直控到 H，连续稳定 3 秒后发 I 目标给 Planner |
-| WAIT_PLANNER_I / PLANNER_I | Planner 重新接管 H→I；要求新的轨迹 ID，旧轨迹不放行 |
-| HOLD / LANDING | I 到点连续稳定 3 秒（`hover_seconds`），再请求一次 LAND，交给 PX4Ctrl 下降 |
+| DIRECT（G→H） | 直控到 H；H 是**经过点**，距离 ≤ `pass_radius` 就立刻发 I 目标，不悬停 |
+| WAIT_PLANNER_I / PLANNER_I | 等 I 的新轨迹。等待期间继续跟踪 G→H 的直控参考（不停车）；旧轨迹不放行 |
+| HOLD / DESCEND | I 到点连续稳定 3 秒（`hover_seconds`），再等落点参考收敛：实测误差 ≤ `landing/target_tolerance`(0.03 m) 且速度 ≤ `target_speed`(0.05 m/s)，最多等 `target_timeout`(8 s)；仅当 `landing/approach_height>0`（默认 0，不启用）时中间多一段位置控制下降 |
+| LANDING | 判据满足（或进近到位）后请求一次 LAND，并打印当时的实测误差；交给 PX4Ctrl 完成最后一段并锁桨 |
 | DONE | 同时确认落地和 FCU 已锁桨，不是只发出 LAND 就算完成 |
 
 可在另一个**实机检查终端**只读观察：
@@ -458,6 +476,7 @@ find "$FLIGHT_DIR/recording" -maxdepth 1 -name '*.active' -print
 - 有正常结束的 `.bag` 文件；可能是 `flight_0.bag` 等多个分片，以实际文件为准。存在 `.active` 时先确认是否仍在录制或异常结束，不宣称已完整保存。
 - `manifest.json` 的 `coverage.missing_inputs_or_maps` 应为 `[]`；检查 `snapshot_errors`、`end_snapshot_errors` 是否有失败。
 - 额外检查目标 `/goal`、阶段 `/drone_0_mission/state`、私有 Planner 指令、最终 `/setpoints_cmd`、PX4Ctrl 和 FCU 状态确实有消息。默认覆盖检查并不验证全部混合任务证据。
+- 降落证据两条一起看：终端 6 在发 LAND 前打印的 `落点参考已收敛：误差 x.xxxm、速度 x.xxxm/s`（或未收敛的 `logwarn` 兜底行），以及实际落点与 I 的水平偏差。两者对不上时，问题在估计或增益；前者本身就很大时，问题是悬停没有收敛到位。
 
 在 Bash 中查看本轮各分片的摘要：
 
@@ -673,7 +692,19 @@ PY
 - [ ] F/G/H 已实测并改为 `measured: true`（或明确知道本轮不飞）；`pass_radius` 小于起飞悬停点到 B 的距离。
 - [ ] RAW/膨胀地图持续更新，坐标对齐；起飞通道、Planner 段（A→B、B→C、D→E、E→F、H→I）与直控段（C→D、F→G、G→H）均人工确认。
 - [ ] 录包已实际开始且地图监视正常，磁盘/负载合格；不是仅打印了命令。
+- [ ] 危险品投放：`/servo/push` 服务可用（`px4_servo` 已启动、`ready: true`），YOLO 检测话题 `/yolo/detections` 已有数据，投放点 C/D、`height`、`wait_timeout` 已确认；本轮不投放则用 `--no-hazard-drop`。
+- [ ] 舵机推出后不自动收回（`hold_s=0`）已确认；投放成功后需 `/servo/retract` 或上锁才收回，`PWM_AUX_DIS6` 为 500。
 - [ ] `--check` 已通过；飞机没有被提前手动起飞，RC/控制状态满足程序要求。
 - [ ] 确认知道脚本退出不等于飞机停止，异常时优先飞手接管。
+
+## 14. YOLO 视觉识别（投放默认启用，需要它出检测）
+
+`yolo_trt_ros`（USB 相机 + TensorRT 检测，队友新增）只订阅图像、发布检测结果，**不订阅也不发布任何飞行指令话题**，与第 1～13 节的飞行链相互独立；但自 2026-10-31 起 `hazard_drop/enabled: true`，投放判定要靠它的 `/yolo/detections`。没启动时任务照飞，只是 C/D 悬停等满 `wait_timeout`(10 s) 后不投继续。启动命令、话题表、检测 JSON 字段和覆盖参数见 [最简启动文档第 7 步](HYBRID_MISSION_QUICKSTART.md#第-7-步终端-7可选yolo-视觉识别)。
+
+本手册只补充三条与本手册其余内容相关的约定：
+
+- 它占 GPU 与 3 个推理线程，**不在空中第一次启动**；先在地面跑起来，确认 `/ekf/ekf_odom`、`/Odometry` 频率和 Planner 周期没有下降再决定要不要带着飞。
+- 默认 `show_window:=true`：启动会在桌面弹出 `YOLO TensorRT` 预览窗口（10 FPS）。飞行中不需要看图就用 `show_window:=false` 启动，少占一点 GPU。
+- 第 6 节的录包器话题表固定、不含 YOLO 话题；要留检测结果就另开独立 `rosbag record`（写在 `$FLIGHT_DIR/yolo.bag`），不要改飞行包的录制命令。
 
 参数和状态机细节见 [混合任务说明](HYBRID_PLANNER_PX4CTRL_MISSION.md)；地图细节见 [地图检查](OBSTACLE_MAP_CHECK.md)；历史故障证据见 [文档总入口](README.md)。

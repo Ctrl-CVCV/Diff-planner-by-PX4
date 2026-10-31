@@ -1,6 +1,6 @@
 # 配套标定笔记
 
-> 历史部署/调参参考，保留当时配置，不代表当前参数。当前实机操作顺序、录包和回放以 [全流程手册](ROSBAG_RECORD_REPLAY.md) 为准；不要同时运行旧启动/录包命令。
+> 历史部署/调参参考，保留当时配置，不代表当前参数。当前实机操作顺序、录包和回放以 [混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md) 为准；不要同时运行旧启动/录包命令。
 
 LiDAR–IMU 外参与时间偏移重新标定流程见：[`LIDAR_IMU_EXTRINSIC_CALIBRATION.md`](LIDAR_IMU_EXTRINSIC_CALIBRATION.md)。
 

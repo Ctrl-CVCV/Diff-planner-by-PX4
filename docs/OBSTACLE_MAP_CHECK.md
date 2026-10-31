@@ -106,7 +106,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/check_dif
 ### 3.1 实时查看当前障碍地图（不是 rosbag 回放）
 
 只看地图时，在地面未解锁状态启动前述感知/EKF 和规划器即可，**不需要启动 PX4Ctrl、起飞脚本或发送航点**。
-本节显示当前节点发布的地图；历史包请按[全流程手册](ROSBAG_RECORD_REPLAY.md)第 8～13 节隔离回放。
+本节显示当前节点发布的地图；历史包请按[混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md)第 12 节隔离回放。
 
 #### 第一步：确认连接实机 master
 
@@ -129,17 +129,16 @@ rosparam get /use_sim_time
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"
+roslaunch diff_planner view_obstacle_map.launch
 ```
 
-不需要重新编译，直接读取新配置。此配置 `Fixed Frame=world`，只有观察/测量工具，
-没有 `2D Nav Goal` 或初始位姿发布工具，不会发送起飞、航点或控制消息。
+该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 连续轨迹线）和 RViz；第一次使用先 `cd ~/gcs_ws && catkin_make -j2` 安装脚本。只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时轨迹线没有数据。此配置 `Fixed Frame=world`，只有观察/测量工具，没有 `2D Nav Goal` 或初始位姿发布工具，不会发送起飞、航点或控制消息。
 
 | 显示名称 / 颜色 | 话题 | 含义 |
 |---|---|---|
 | Occupancy Raw / 橙色 | `/drone_0_diff_planner_node/grid_map/occupancy` | 未膨胀的占据栅格中心，不是雷达原始点云 |
 | Occupancy Inflated / 半透明蓝色 | `/drone_0_diff_planner_node/grid_map/occupancy_inflate` | 膨胀后的占据栅格中心 |
-| EKF Position / 黄色箭头 | `/ekf/ekf_odom` | EKF 位置与方向 |
+| Flight Path (ekf_odom) / 黄色线条 | `/ekf/flight_path` | 实际飞行轨迹（EKF 里程计累积）；不再用箭头表示里程计 |
 | Registered Cloud Optional TF Required / 灰色，默认关闭 | `/cloud_registered` | 配准点云；需要真实有效的坐标变换才能叠加 |
 
 先取消勾选蓝色图查看橙色障碍边界，再打开蓝色图观察膨胀范围；从俯视和侧视分别检查通道、地面与飞行高度。
@@ -317,8 +316,8 @@ axis_inflation = layers * effective_resolution
 
 ## 6. 下次诊断如何保留证据
 
-从 EKF 启动、RC/控制器准备、录包、起飞脚本到隔离 master 下 RViz 回放的完整步骤，见
-[ROSBAG_RECORD_REPLAY.md](ROSBAG_RECORD_REPLAY.md)。
+从 EKF 启动、RC/控制器准备、录包、任务执行到隔离 master 下 RViz 回放的完整步骤，见
+[混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md)。
 2026-10-20 21:45 这次已发航点但仍悬停的证据与结论，见
 [FLIGHT_ANALYSIS_20261020_2145.md](FLIGHT_ANALYSIS_20261020_2145.md)：
 规划器连续碰撞判定失败后输出约 2 秒的原地指令；现有包缺失地图，不能断言具体占据来源。

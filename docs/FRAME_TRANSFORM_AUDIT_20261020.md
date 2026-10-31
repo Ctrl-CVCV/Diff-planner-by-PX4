@@ -189,7 +189,7 @@ PX4Ctrl 的 `controller.cpp` 使用 `u.q = imu.q * odom.q.inverse() * desired_at
 同时保留原始Livox、两路IMU、LIO/EKF和两种地图，分别验证动态数值对齐、时间衔接和近场射线清障。
 静止数据不足以验证68.4ms时间轴风险或物理外参；不能仅为让RViz叠图就添加未经确认的identity TF。
 
-完整启动与隔离回放流程见 [ROSBAG_RECORD_REPLAY.md](ROSBAG_RECORD_REPLAY.md)。
+完整启动与隔离回放流程见 [混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md)（隔离回放为第 12 节）。
 先只启动已验证的感知链和规划器，不启动起飞脚本，做地面检查：
 
 ```bash

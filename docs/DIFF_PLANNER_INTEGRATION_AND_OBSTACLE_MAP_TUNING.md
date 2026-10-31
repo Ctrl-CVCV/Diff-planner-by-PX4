@@ -1,6 +1,6 @@
 # Diff-Planner 接入、障碍地图测试与膨胀参数调试报告
 
-> 历史部署/调参参考，保留当时配置，不代表当前参数。当前实机操作顺序、录包和回放以 [全流程手册](ROSBAG_RECORD_REPLAY.md) 为准；不要同时运行旧启动/录包命令。
+> 历史部署/调参参考，保留当时配置，不代表当前参数。当前实机操作顺序、录包和回放以 [混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md) 为准；不要同时运行旧启动/录包命令。
 
 - **日期：** 2026-10-19
 - **平台：** PX4 + MAVROS + FAST-LIO2 + EKF + PX4Ctrl + Diff-Planner

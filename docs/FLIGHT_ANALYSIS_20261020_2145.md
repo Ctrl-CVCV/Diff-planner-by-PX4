@@ -126,4 +126,4 @@ trajectory_flag = 1
 电量随后回升，不能仅凭这个百分比断言电池真的耗尽，也不能把告警直接忽略；
 需在地面校核电池状态、负载压降与 PX4 电量估计/阈值。
 
-完整的启动、录制和隔离回放步骤见 [录包与 RViz 回放教程](ROSBAG_RECORD_REPLAY.md)。
+完整的启动、录制和隔离回放步骤见 [混合任务全流程手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md)（录包第 6 节、隔离回放第 12 节）。
