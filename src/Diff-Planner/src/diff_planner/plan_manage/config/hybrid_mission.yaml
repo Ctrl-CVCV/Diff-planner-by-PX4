@@ -7,18 +7,18 @@ controller_node: /px4ctrl
 points:
   A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
   B: {xyz: [1.75, 0.0, 0.8], yaw_deg: 0.0}
-  C: {xyz: [0.48,1.33, 0.80],yaw_deg: 180.0}
-  D: {xyz: [0.03,1.35,0.8], yaw_deg: 180.0}
-  E: {xyz: [1.93, 2.67, 0.8], yaw_deg: 90.0, measured: true}
+  C: {xyz: [0.43,1.33, 0.80],yaw_deg: 180.0}
+  D: {xyz: [-0.03,1.35,0.8], yaw_deg: 180.0}
+  E: {xyz: [1.90, 2.66, 0.8], yaw_deg: 90.0, measured: true}
   # F 是 Planner → 直控的切换点：到点悬停 arrival_dwell 秒后切直控。实测后填坐标并把 measured 改成 true。
-  F: {xyz: [1.10, 2.67, 0.8], yaw_deg: 90.0, measured: true}
+  F: {xyz: [1.08, 2.65, 0.8], yaw_deg: 90.0, measured: true}
   # G、H 由普通 PX4Ctrl 直控，各自到点悬停 arrival_dwell 秒；实测后填坐标并改 measured。
-  G: {xyz: [2.70, 2.68,0.8], yaw_deg: 90.0, measured: true}
-  H: {xyz: [1.93, 2.67, 0.8], yaw_deg: 180.0, measured: true}
+  G: {xyz: [2.66, 2.66,0.8], yaw_deg: 90.0, measured: true}
+  H: {xyz: [1.90, 2.66, 0.8], yaw_deg: 180.0, measured: true}
   # I 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
   # y=-0.10 是实测落点左偏的经验补偿：world y 指向起飞航向的左侧，取 -0.10 即向右挪 10cm。
   # 这个值按实测落点偏差调整，不是原始测量坐标；改完仍会按 landing/target_tolerance 收敛后再降落。
-  I                 : {xyz: [0.00, -0.10, 0.8], yaw_deg: 180.0}
+  I                 : {xyz: [-0.06, -0.12, 0.8], yaw_deg: 180.0}
 
 takeoff:
   height: 0.80
