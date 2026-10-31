@@ -16,7 +16,9 @@ points:
   G: {xyz: [2.71, 2.68,0.8], yaw_deg: 90.0, measured: true}
   H: {xyz: [1.93, 2.68, 0.8], yaw_deg: 180.0, measured: true}
   # I 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
-  I: {xyz: [0.00, -1.00, 0.8], yaw_deg: 180.0}
+  # y=-0.10 是实测落点左偏的经验补偿：world y 指向起飞航向的左侧，取 -0.10 即向右挪 10cm。
+  # 这个值按实测落点偏差调整，不是原始测量坐标；改完仍会按 landing/target_tolerance 收敛后再降落。
+  I: {xyz: [0.00, -0.10, 0.8], yaw_deg: 180.0}
 
 takeoff:
   height: 0.80
