@@ -94,6 +94,24 @@ private:
 	void set_hov_with_odom();
 	void set_hov_with_rc();
 
+	// ---- kill-switch recovery ----
+	struct KillReboot_t
+	{
+		bool timer_running{false};
+		bool handled{false};
+		ros::Time timer_start;
+	};
+	KillReboot_t kill_reboot;
+	void handle_kill_reboot(const ros::Time &now_time);
+
+	// ---- landing completion fallback ----
+	struct LandingFallback_t
+	{
+		bool timer_running{false};
+		ros::Time timer_start;
+	};
+	LandingFallback_t landing_fallback;
+
 	bool toggle_offboard_mode(bool on_off); // It will only try to toggle once, so not blocked.
 	bool toggle_arm_disarm(bool arm); // It will only try to toggle once, so not blocked.
 	void reboot_FCU();

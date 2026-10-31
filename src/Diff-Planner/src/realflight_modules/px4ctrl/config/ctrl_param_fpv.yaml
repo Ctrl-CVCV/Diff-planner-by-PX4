@@ -2,11 +2,11 @@
 # ⭐⭐⭐  Set parameters carefully for satisfied performance!   ⭐⭐⭐ #
 #########################################################################
 
-mass        : 2.35 # kg 
+mass        : 2.90 # kg 
 gra         : 9.81 
 pose_solver : 0    # 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 200.0
-max_manual_vel: 0.30
+max_manual_vel: 0.35
 max_auto_vel: 0.50  # 自动飞行位置环逐轴速度钳位 (m/s)。2026-10-29 前这里是硬编码 1.0，约为标称 0.30m/s 的 3.3 倍
 max_angle: 20  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 21.0 # 6S battery
@@ -24,6 +24,23 @@ auto_takeoff_land:
     takeoff_height: 0.8 # m
     takeoff_land_speed: 0.15 # m/s
 
+# 杀桨(kill switch)后自动重启飞控。PX4 在 flight termination 之后会锁住解锁，
+# 不重启飞控就无法再次 arm。只有满足"已断桨 + 已落地(可选)"时才执行重启，
+# 重启前会打印倒计时，期间任何条件不满足都会取消。
+kill_reboot:
+    enable: true
+    reboot_delay: 5.0        # s，落地断桨后等待多久再重启飞控
+    require_on_ground: true  # 必须 PX4 报告 landed_state=ON_GROUND 才重启
+
+# 降落收尾。px4ctrl 自己的落地判据成立（期望高度比实测低 0.5 m 以上、速度 < 0.1 m/s
+# 且持续 3 s）之后，正常情况下要等 PX4 上报 landed_state=ON_GROUND 才会解锁断桨。
+# 但本机的 PX4 没有外部定位融合，landed_state 可能长期停在 IN_AIR，导致降落卡住。
+# 这里给一个超时：N 秒后 PX4 仍不确认，就把控制交还飞手（切回 MANUAL_CTRL）并提示杀桨；
+# 不会强制解锁、也不会强制停桨。
+landing:
+    enable: true
+    wait_after_landed: 5.0   # s，px4ctrl 判定落地后，等 PX4 确认的最长时间
+
 thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(Unit:N): F=K1*Voltage^K2*(K3*u^2+(1-K3)*u). 
     print_value: false # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating.
     accurate_thrust_model: false  # This can always enabled if don't require accurate control performance :-)
@@ -33,7 +50,7 @@ thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(
     K2: 1.6942 # Needs precise calibration!
     K3: 0.6786 # Needs precise calibration! K3 equals THR_MDL_FAC in https://docs.L_Ctrl.io/master/en/config_mc/pid_tuning_guide_multicopter.html.
     # approximate thrust mapping parameters
-    hover_percentage: 0.340 # sThrust percentage in Stabilize/Arco mode # *
+    hover_percentage: 0.430 # sThrust percentage in Stabilize/Arco mode # *
 
 gain: 
     # Cascade PID controller. Recommend to read the code.

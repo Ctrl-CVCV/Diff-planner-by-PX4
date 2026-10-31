@@ -58,12 +58,29 @@ public:
 		double speed;
 	};
 
+	struct KillReboot
+	{
+		bool enable{true};
+		double reboot_delay{5.0}; // s, wait this long on the ground before rebooting the FCU
+		bool require_on_ground{true};
+	};
+
+	struct Landing
+	{
+		bool enable{true};
+		// s, wait this long after px4ctrl's own land detector fires before giving up on
+		// PX4's landed_state confirmation (PX4 has no external position aiding here).
+		double wait_after_landed{5.0};
+	};
+
 	Gain gain;
 	RotorDrag rt_drag;
 	MsgTimeout msg_timeout;
 	RCReverse rc_reverse;
 	ThrustMapping thr_map;
 	AutoTakeoffLand takeoff_land;
+	KillReboot kill_reboot;
+	Landing landing;
 
 	int pose_solver;
 	double mass;

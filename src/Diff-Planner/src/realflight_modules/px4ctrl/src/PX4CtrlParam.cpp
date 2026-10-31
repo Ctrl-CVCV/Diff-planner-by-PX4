@@ -55,6 +55,27 @@ void Parameter_t::config_from_ros_handle(const ros::NodeHandle &nh)
 	read_essential_param(nh, "auto_takeoff_land/takeoff_height", takeoff_land.height);
 	read_essential_param(nh, "auto_takeoff_land/takeoff_land_speed", takeoff_land.speed);
 
+	// Optional: reboot the FCU automatically after the kill switch latches flight termination,
+	// otherwise PX4 refuses to arm again until it is restarted by hand.
+	nh.param<bool>("kill_reboot/enable", kill_reboot.enable, kill_reboot.enable);
+	nh.param<double>("kill_reboot/reboot_delay", kill_reboot.reboot_delay, kill_reboot.reboot_delay);
+	nh.param<bool>("kill_reboot/require_on_ground", kill_reboot.require_on_ground, kill_reboot.require_on_ground);
+	if (kill_reboot.reboot_delay < 0.0)
+	{
+		ROS_ERROR("\"kill_reboot/reboot_delay\" must be non-negative, got %f. Using 5.0 s.", kill_reboot.reboot_delay);
+		kill_reboot.reboot_delay = 5.0;
+	}
+
+	// Optional: what to do when px4ctrl's own land detector says "landed" but PX4 never
+	// reports landed_state=ON_GROUND (it has no external position aiding on this aircraft).
+	nh.param<bool>("landing/enable", landing.enable, landing.enable);
+	nh.param<double>("landing/wait_after_landed", landing.wait_after_landed, landing.wait_after_landed);
+	if (landing.wait_after_landed < 0.0)
+	{
+		ROS_ERROR("\"landing/wait_after_landed\" must be non-negative, got %f. Using 5.0 s.", landing.wait_after_landed);
+		landing.wait_after_landed = 5.0;
+	}
+
 	read_essential_param(nh, "thrust_model/print_value", thr_map.print_val);
 	read_essential_param(nh, "thrust_model/K1", thr_map.K1);
 	read_essential_param(nh, "thrust_model/K2", thr_map.K2);

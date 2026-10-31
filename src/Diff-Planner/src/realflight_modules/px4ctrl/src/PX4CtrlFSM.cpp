@@ -41,6 +41,7 @@ void PX4CtrlFSM::process()
 	Controller_Output_t u;
 	Desired_State_t des(odom_data);
 	bool rotor_low_speed_during_land = false;
+	handle_kill_reboot(now_time);
 	const bool landing_requested = param.takeoff_land.enable && takeoff_land_data.triggered &&
 		takeoff_land_data.takeoff_land_cmd == quadrotor_msgs::TakeoffLand::LAND &&
 		state_data.current_state.armed && state_data.current_state.mode == "OFFBOARD" &&
@@ -271,6 +272,7 @@ void PX4CtrlFSM::process()
 		{
 			state = MANUAL_CTRL;
 			toggle_offboard_mode(false);
+			landing_fallback.timer_running = false;
 
 			ROS_WARN("[px4ctrl] From AUTO_LAND to MANUAL_CTRL(L1)!");
 		}
@@ -279,10 +281,12 @@ void PX4CtrlFSM::process()
 			state = AUTO_HOVER;
 			set_hov_with_odom();
 			des = get_hover_des();
+			landing_fallback.timer_running = false;
 			ROS_INFO("[px4ctrl] From AUTO_LAND to AUTO_HOVER(L2)!");
 		}
 		else if (!get_landed())
 		{
+			landing_fallback.timer_running = false;
 			des = get_takeoff_land_des(-param.takeoff_land.speed);
 		}
 		else
@@ -298,6 +302,7 @@ void PX4CtrlFSM::process()
 
 			if (extended_state_data.current_extended_state.landed_state == mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND) // PX4 allows disarm after this
 			{
+				landing_fallback.timer_running = false;
 				static double last_trial_time = 0; // Avoid too frequent calls
 				if (now_time.toSec() - last_trial_time > 1.0)
 				{
@@ -310,6 +315,30 @@ void PX4CtrlFSM::process()
 					}
 
 					last_trial_time = now_time.toSec();
+				}
+			}
+			else if (param.landing.enable)
+			{
+				// PX4 has no external position aiding on this aircraft, so its landed_state can
+				// stay IN_AIR long after touchdown. Once our own detector says "landed", wait a
+				// limited time for PX4 to confirm; then hand the vehicle back to the pilot.
+				// Never force a disarm or stop the motors here.
+				if (!landing_fallback.timer_running)
+				{
+					landing_fallback.timer_running = true;
+					landing_fallback.timer_start = now_time;
+					ROS_WARN("[px4ctrl] Landed by px4ctrl's own detector, but PX4 has not reported "
+							 "landed_state=ON_GROUND. Switching back to MANUAL_CTRL in %.1f s if it still does not confirm.",
+							 param.landing.wait_after_landed);
+				}
+				else if ((now_time - landing_fallback.timer_start).toSec() >= param.landing.wait_after_landed)
+				{
+					landing_fallback.timer_running = false;
+					print_once_flag = true;
+					state = MANUAL_CTRL;
+					toggle_offboard_mode(false);
+					ROS_WARN("[px4ctrl] PX4 did not confirm the landing; switched to MANUAL_CTRL. "
+							 "The vehicle is on the ground and still armed: kill the motors with the RC kill switch.");
 				}
 			}
 		}
@@ -681,12 +710,23 @@ bool PX4CtrlFSM::toggle_arm_disarm(bool arm)
 {
 	mavros_msgs::CommandBool arm_cmd;
 	arm_cmd.request.value = arm;
-	if (!(arming_client_srv.call(arm_cmd) && arm_cmd.response.success))
+
+	if (!arming_client_srv.call(arm_cmd))
 	{
+		ROS_ERROR("[px4ctrl] %s failed: /mavros/cmd/arming service call did not return.", arm ? "ARM" : "DISARM");
+		return false;
+	}
+
+	if (!arm_cmd.response.success)
+	{
+		// MAV_RESULT: 0=ACCEPTED, 1=TEMPORARILY_REJECTED (pre-flight check failed),
+		//             2=DENIED (permanent denial), 3=UNSUPPORTED, 4=FAILED.
 		if (arm)
-			ROS_ERROR("ARM rejected by PX4! Kill-switch activated?");
+			ROS_ERROR("[px4ctrl] ARM rejected by PX4 (MAV_RESULT=%d). "
+					  "1 = a pre-flight check failed, 2 = denied (kill switch / flight termination / safety switch).",
+					  (int)arm_cmd.response.result);
 		else
-			ROS_ERROR("DISARM rejected by PX4!");
+			ROS_ERROR("[px4ctrl] DISARM rejected by PX4 (MAV_RESULT=%d).", (int)arm_cmd.response.result);
 
 		return false;
 	}
@@ -710,4 +750,61 @@ void PX4CtrlFSM::reboot_FCU()
 
 	// if (param.print_dbg)
 	// 	printf("reboot result=%d(uint8_t), success=%d(uint8_t)\n", reboot_srv.response.result, reboot_srv.response.success);
+}
+
+// PX4 latches flight termination after the kill switch stops the motors and refuses to arm
+// again until the FCU is restarted. Once the vehicle is disarmed and safely on the ground,
+// reboot the FCU automatically so the next takeoff is not blocked by that latch.
+void PX4CtrlFSM::handle_kill_reboot(const ros::Time &now_time)
+{
+	if (!param.kill_reboot.enable)
+		return;
+
+	constexpr uint8_t MAV_STATE_FLIGHT_TERMINATION = 8;
+	const mavros_msgs::State &fcu = state_data.current_state;
+
+	// Nothing to do until the FCU reports the termination latch.
+	if (!fcu.connected || fcu.system_status != MAV_STATE_FLIGHT_TERMINATION)
+	{
+		if (kill_reboot.timer_running)
+			ROS_WARN("[px4ctrl] Kill-reboot cancelled: flight termination is no longer reported.");
+		kill_reboot.timer_running = false;
+		kill_reboot.handled = false; // a later kill switch event may trigger a new reboot
+		return;
+	}
+
+	if (kill_reboot.handled) // already rebooted once for this termination event
+		return;
+
+	const bool on_ground = extended_state_data.current_extended_state.landed_state ==
+		mavros_msgs::ExtendedState::LANDED_STATE_ON_GROUND;
+	if (fcu.armed || (param.kill_reboot.require_on_ground && !on_ground))
+	{
+		if (kill_reboot.timer_running)
+			ROS_WARN("[px4ctrl] Kill-reboot cancelled: vehicle is %s.",
+					 fcu.armed ? "still armed" : "not on the ground");
+		kill_reboot.timer_running = false;
+		return;
+	}
+
+	if (!kill_reboot.timer_running)
+	{
+		kill_reboot.timer_running = true;
+		kill_reboot.timer_start = now_time;
+		ROS_WARN("[px4ctrl] Flight termination (kill switch) is latched and the vehicle is disarmed on the ground. "
+				 "The FCU will reboot in %.1f s to clear the arm lock. Keep clear of the propellers.",
+				 param.kill_reboot.reboot_delay);
+		return;
+	}
+
+	if ((now_time - kill_reboot.timer_start).toSec() < param.kill_reboot.reboot_delay)
+		return;
+
+	ROS_WARN("[px4ctrl] Rebooting FCU now to clear the flight-termination arm lock.");
+	reboot_FCU();
+
+	// Do not keep commanding the FCU while it reboots.
+	state = MANUAL_CTRL;
+	kill_reboot.timer_running = false;
+	kill_reboot.handled = true;
 }
