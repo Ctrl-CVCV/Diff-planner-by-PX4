@@ -146,14 +146,22 @@
         <param name="optimization/weight_swarm" value="10000.0" type="double"/>
         <param name="optimization/weight_feasibility" value="10000.0" type="double"/>
         <param name="optimization/weight_sqrvariance" value="10000.0" type="double"/>
-        <param name="optimization/weight_time" value="10.0" type="double"/>
+        <param name="optimization/weight_time" value="5.0" type="double"/> <!-- 2026-10-31：10.0 → 5.0。时间代价是 Σ(1/T)*weight_time，
+             值越小优化器越愿意拉长段时长，拐角峰值速度下降（实测 10.0 时峰值 0.45–0.49，始终贴 0.54 的验收线）。
+             本任务不追求高速：长时间悬停/低速投放更适合平缓轨迹。代价是每段更慢，任务总时长变长，
+             需复核 planner_timeout(45s)、motion_timeout(3s) 是否仍够用。 -->
         <param name="optimization/obstacle_clearance" value="0.15" type="double"/>
         <param name="optimization/obstacle_clearance_soft" value="0.4" type="double"/>
         <param name="optimization/swarm_clearance" value="0.15000000000000002" type="double"/> <!-- heterogeneous support: my required clearance -->
         <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
-        <param name="optimization/vel_tolerance" value="0.10" type="double"/> <!-- 检查上限 = max_vel + 此值；1.0 会让 1.35m/s 的轨迹也算合格 -->
+        <param name="optimization/vel_tolerance" value="0.30" type="double"/> <!-- 检查上限 = max_vel + 此值 = 0.24 + 0.30 = 0.54。
+             weight_time=10 时的实测：优化器输出几乎不随 max_vel 变，max_vel=0.30 峰值 0.51–0.53，
+             降到 0.24 后仍是 0.450–0.489（10-31 23:5x 两次连拒）。
+             原因是时间代价把时长压短，速度罚只在超限一侧生效，均衡点自然比 max_vel 高 0.2 m/s 左右。
+             所以容差必须覆盖这个系统性超调；真要压速度得改 weight_time，不是改 max_vel。
+             2026-10-31 起 weight_time=5.0，峰值预计下降，但尚无实测数据；在拿到新峰值前不要下调本容差。 -->
         <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
-        <param name="optimization/acc_tolerance" value="1.0" type="double"/>
+        <param name="optimization/acc_tolerance" value="0.2" type="double"/>
         <param name="optimization/max_jer" value="$(arg max_jer)" type="double"/>
         <param name="optimization/record_opt" value="true"/>
     </node>

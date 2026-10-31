@@ -20,7 +20,13 @@
         <arg name="fx" value="386.2706298828125"/>
         <arg name="fy" value="386.2706298828125"/>
         <!-- maximum velocity, acceleration and jerk the drone will reach -->
-        <arg name="max_vel" value="0.30" />
+        <!-- 速度约束是三次方软罚（feasibilityGradCostV），实测输出恒比 max_vel 高约 0.2 m/s，
+             且几乎不随 max_vel 变：max_vel=0.30 → 峰值 0.51–0.53；改成 0.24 后 → 0.450–0.489，
+             仍然撞穿 tuned 的检查上限（历史见 optimization/vel_tolerance 的注释）。
+             结论：这个 arg 不是"保证不超过"的速度上限，只是软罚的目标点；
+             真正的验收线是 max_vel + vel_tolerance（现 0.54）。
+             留在 0.24 是为了让时间分配更宽、轨迹更缓，不要指望它压住峰值。 -->
+        <arg name="max_vel" value="0.24" />
         <arg name="max_acc" value="0.6" />
         <arg name="max_jer" value="5.0"/>
         <!--always set to 1.5 times grater than sensing horizen-->

@@ -152,7 +152,7 @@ namespace diff_planner
       if (vel.norm() > max_vel_+ vel_tolerance_)
       {
         ROS_WARN_STREAM("Dynamic feasibility check failed: velocity limit exceeded at t="
-                        << t << ", |v|=" << vel.norm() << " > " << max_vel_ + 1.0);
+                        << t << ", |v|=" << vel.norm() << " > " << max_vel_ + vel_tolerance_);
         return false; // Violation found
       }
 
@@ -161,7 +161,7 @@ namespace diff_planner
       if (acc.norm() > max_acc_ + acc_tolerance_)
       {
         ROS_WARN_STREAM("Dynamic feasibility check failed: acceleration limit exceeded at t="
-                        << t << ", |a|=" << acc.norm() << " > " << max_acc_ + 1.0);
+                        << t << ", |a|=" << acc.norm() << " > " << max_acc_ + acc_tolerance_);
         return false; // Violation found
       }
     }
