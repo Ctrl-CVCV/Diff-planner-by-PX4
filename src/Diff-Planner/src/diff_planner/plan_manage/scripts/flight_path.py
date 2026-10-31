@@ -49,6 +49,16 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def strip_ros_args(argv):
+    """Drop ROS remapping arguments (``__name:=x``, ``foo:=bar``) before argparse.
+
+    roslaunch appends ``__name:=...`` and ``__log:=...`` to the command line of
+    every node.  argparse rejects unknown arguments with ``SystemExit(2)``, which
+    killed this node about one second after a ``roslaunch`` start.
+    """
+    return [arg for arg in argv if ':=' not in arg]
+
+
 class PathAccumulator(object):
     """Pure pose buffer, kept free of ROS types so it can be unit tested."""
 
@@ -164,7 +174,7 @@ class FlightPath(object):
 
 
 def main(argv):
-    args = parse_args(argv)
+    args = parse_args(strip_ros_args(argv))
     rospy.init_node('flight_path', anonymous=False)
     FlightPath(args)
     try:

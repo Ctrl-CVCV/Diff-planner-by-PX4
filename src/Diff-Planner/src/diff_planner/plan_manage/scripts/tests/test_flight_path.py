@@ -49,6 +49,26 @@ class PathAccumulatorTest(unittest.TestCase):
             flight_path.PathAccumulator(min_distance=0.0, max_points=1)
 
 
+class StripRosArgsTest(unittest.TestCase):
+
+    def test_drops_remap_arguments(self):
+        argv = ['--odom', '/ekf/ekf_odom', '__name:=flight_path',
+                '--topic', '/ekf/flight_path', '__log:=/tmp/flight_path-1.log']
+        self.assertEqual(flight_path.strip_ros_args(argv),
+                         ['--odom', '/ekf/ekf_odom', '--topic', '/ekf/flight_path'])
+
+    def test_keeps_plain_arguments(self):
+        argv = ['--min-distance', '0.05']
+        self.assertEqual(flight_path.strip_ros_args(argv), argv)
+
+    def test_parses_launch_style_argv(self):
+        argv = ['--odom', '/odom', '--ref', '/cmd', '__name:=flight_path',
+                '__log:=/tmp/x.log']
+        args = flight_path.parse_args(flight_path.strip_ros_args(argv))
+        self.assertEqual(args.odom, '/odom')
+        self.assertEqual(args.ref, '/cmd')
+
+
 class PoseFromPositionTest(unittest.TestCase):
 
     def test_copies_position_and_uses_identity_orientation(self):
