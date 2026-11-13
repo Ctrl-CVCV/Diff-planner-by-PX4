@@ -144,6 +144,9 @@ class LaserMapping {
 
     /// options
     bool time_sync_en_ = false;
+    // Static LiDAR-to-IMU time offset from offline calibration (e.g. LiDAR_IMU_Init),
+    // same convention as FAST-LIO: imu_stamp_corrected = imu_stamp - time_offset.
+    double time_offset_lidar_to_imu_ = 0.0;
     double timediff_lidar_wrt_imu_ = 0.0;
     double last_timestamp_lidar_ = 0;
     double lidar_end_time_ = 0;
