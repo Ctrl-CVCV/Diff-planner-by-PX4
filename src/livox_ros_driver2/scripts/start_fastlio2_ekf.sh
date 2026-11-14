@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-click startup: PX4/MAVROS -> IMU rate setter (once per connection) -> Livox MID360s driver
-#                    -> FAST-LIO2 (no RViz) -> EKF.
+#                    -> LIO (faster-lio by default, FAST-LIO2 with --lio fastlio) -> EKF.
 #
 # This script intentionally does NOT start px4ctrl, arm the vehicle, or send any
 # takeoff command. Press Ctrl-C to stop the processes started by this script.
@@ -17,6 +17,10 @@ LIVOX_DEVICE_IP="${LIVOX_DEVICE_IP:-192.168.1.124}"
 LIVOX_LAUNCH="${LIVOX_LAUNCH:-msg_MID360s.launch}"
 LIVOX_NODE="/livox_lidar_publisher2"
 LIVOX_TOPIC="/livox/lidar"
+LIO_IMPL="${LIO_IMPL:-fasterlio}"
+FASTERLIO_DIR="$WS/src/Diff-Planner/src/realflight_modules/faster-lio/faster-lio"
+FASTERLIO_CONFIG="$FASTERLIO_DIR/config/mid360_px4.yaml"
+FASTLIO_CONFIG="$WS/src/FAST_LIO/config/mid360_px4.yaml"
 START_MAVROS=1
 CHECK_ONLY=0
 WAIT_MAVROS=35
@@ -35,12 +39,13 @@ usage() {
   3. PX4 IMU 频率设置节点: ${IMU_RATE} Hz（每次连上飞控只设一次，不周期重发）
   4. Livox MID360s 驱动节点 /livox_lidar_publisher2
      并确认点云话题 /livox/lidar 有实际数据
-  5. FAST-LIO2（不启动 RViz）
+  5. LIO（默认 faster-lio，--lio fastlio 可切回 FAST-LIO2），输出 /Odometry
   6. EKF，输出 /ekf/ekf_odom
 
 选项：
   --fcu-url URL       MAVROS FCU地址（默认：${FCU_URL}）
   --imu-rate HZ       请求的PX4 IMU消息频率（默认：${IMU_RATE}）
+  --lio NAME          定位实现：fasterlio（默认）或 fastlio
   --no-mavros         不启动MAVROS，但仍要求现有/mavros话题可用
   --check-only        只检查文件和ROS包，不启动任何节点
   -h, --help          显示帮助
@@ -58,6 +63,9 @@ while (($#)); do
     --imu-rate)
       [[ $# -ge 2 ]] || { echo "错误：--imu-rate 缺少参数" >&2; exit 2; }
       IMU_RATE="$2"; shift 2 ;;
+    --lio)
+      [[ $# -ge 2 ]] || { echo "错误：--lio 缺少参数" >&2; exit 2; }
+      LIO_IMPL="$2"; shift 2 ;;
     --no-mavros) START_MAVROS=0; shift ;;
     --check-only) CHECK_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -70,6 +78,11 @@ if ! [[ "$IMU_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   exit 2
 fi
 
+case "$LIO_IMPL" in
+  fasterlio|fastlio) ;;
+  *) echo "错误：--lio 只能是 fasterlio 或 fastlio（当前：$LIO_IMPL）。" >&2; exit 2 ;;
+esac
+
 for file in "$ROS_SETUP" "$WS_SETUP"; do
   [[ -r "$file" ]] || { echo "错误：找不到 $file" >&2; exit 1; }
 done
@@ -79,7 +92,12 @@ source "$ROS_SETUP"
 # shellcheck disable=SC1090
 source "$WS_SETUP"
 
-required_packages=(livox_ros_driver2 fast_lio ekf)
+required_packages=(livox_ros_driver2 ekf)
+if [[ "$LIO_IMPL" == fasterlio ]]; then
+  required_packages+=(faster_lio)
+else
+  required_packages+=(fast_lio)
+fi
 (( START_MAVROS )) && required_packages+=(mavros)
 for pkg in "${required_packages[@]}"; do
   if ! rospack find "$pkg" >/dev/null 2>&1; then
@@ -92,10 +110,19 @@ required_files=(
   "$WS/src/livox_ros_driver2/launch_ROS1/$LIVOX_LAUNCH"
   "$WS/src/livox_ros_driver2/config/MID360s_config.json"
   "$WS/src/livox_ros_driver2/launch_ROS1/set_px4_imu_rate.launch"
-  "$WS/src/FAST_LIO/launch/mapping_mid360_px4.launch"
-  "$WS/src/FAST_LIO/config/mid360_px4.yaml"
   "$WS/src/Diff-Planner/src/realflight_modules/faster-lio/ekf_pose/launch/ekf_fastlio2.launch"
 )
+if [[ "$LIO_IMPL" == fasterlio ]]; then
+  required_files+=(
+    "$FASTERLIO_DIR/launch/mapping_mid360.launch"
+    "$FASTERLIO_CONFIG"
+  )
+else
+  required_files+=(
+    "$WS/src/FAST_LIO/launch/mapping_mid360_px4.launch"
+    "$FASTLIO_CONFIG"
+  )
+fi
 for file in "${required_files[@]}"; do
   [[ -r "$file" ]] || { echo "错误：缺少文件 $file" >&2; exit 1; }
 done
@@ -106,9 +133,14 @@ if (( CHECK_ONLY )); then
     exit 1
   }
   echo "检查通过：工作空间、ROS包、launch文件和配置文件均存在。"
+  echo "定位实现：$LIO_IMPL"
   echo "Livox驱动：roslaunch livox_ros_driver2 $LIVOX_LAUNCH"
   echo "Livox配置：主机 $LIVOX_HOST_IP，雷达 $LIVOX_DEVICE_IP"
-  echo "FAST-LIO2配置：$WS/src/FAST_LIO/config/mid360_px4.yaml"
+  if [[ "$LIO_IMPL" == fasterlio ]]; then
+    echo "faster-lio配置：$FASTERLIO_CONFIG"
+  else
+    echo "FAST-LIO2配置：$FASTLIO_CONFIG"
+  fi
   echo "EKF启动文件：$WS/src/Diff-Planner/src/realflight_modules/faster-lio/ekf_pose/launch/ekf_fastlio2.launch"
   exit 0
 fi
@@ -397,8 +429,9 @@ show_livox_failure() {
   echo "====================================" >&2
 }
 
-printf '\n========== FAST-LIO2 + EKF 一键启动 ==========\n'
+printf '\n========== LIO + EKF 一键启动 ==========\n'
 printf '工作空间 : %s\n' "$WS"
+printf '定位实现 : %s\n' "$LIO_IMPL"
 printf 'MAVROS    : %s\n' "$FCU_URL"
 printf 'IMU请求频率: %s Hz\n' "$IMU_RATE"
 printf '日志目录 : %s\n\n' "$LOG_DIR"
@@ -483,12 +516,27 @@ else
   fi
 fi
 
-# 5. FAST-LIO2 (RViz disabled)
+# 5. LIO (RViz disabled). faster-lio publishes /laserMapping/* by default; the
+#    launch remaps odom/cloud back to /Odometry and /cloud_registered so EKF,
+#    px4ctrl and the mission scripts need no changes.
 if message_available /Odometry 6; then
-  echo "复用现有 FAST-LIO2 /Odometry。"
+  echo "复用现有 /Odometry。"
 else
-  start_component fast_lio roslaunch fast_lio mapping_mid360_px4.launch rviz:=false
-  wait_for_message /Odometry "$WAIT_ODOM" "FAST-LIO2里程计"
+  if [[ "$LIO_IMPL" == fasterlio ]]; then
+    start_component faster_lio roslaunch faster_lio mapping_mid360.launch \
+      "config_file:=$FASTERLIO_CONFIG" \
+      start_lidar:=false \
+      mapping_node_name:=laserMapping \
+      odom_topic:=/Odometry \
+      cloud_topic:=/cloud_registered \
+      body_cloud_topic:=/cloud_registered_body \
+      path_topic:=/path \
+      rviz:=false
+    wait_for_message /Odometry "$WAIT_ODOM" "faster-lio里程计"
+  else
+    start_component fast_lio roslaunch fast_lio mapping_mid360_px4.launch rviz:=false
+    wait_for_message /Odometry "$WAIT_ODOM" "FAST-LIO2里程计"
+  fi
 fi
 
 # 6. EKF
@@ -503,7 +551,8 @@ cat <<SUMMARY
 
 ================ 启动完成 ================
 LiDAR       : /livox/lidar
-FAST-LIO2   : /Odometry
+定位实现    : $LIO_IMPL
+里程计      : /Odometry
 注册点云    : /cloud_registered
 EKF         : /ekf/ekf_odom
 RViz        : 未启动（rviz:=false）

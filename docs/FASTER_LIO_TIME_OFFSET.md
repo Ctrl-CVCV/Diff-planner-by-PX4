@@ -98,30 +98,31 @@ time_offset_lidar_to_imu: -0.068406 s
 
 ## 3. 新配置：`faster-lio/config/mid360_px4.yaml`
 
-与 `FAST_LIO/config/mid360_px4.yaml` 保持同一套标定数值：
+与 `FAST_LIO/config/mid360_px4.yaml` 保持同一套标定数值（2026-11-13 重装后重新标定，见第 7 节）：
 
 ```yaml
 common:
     lid_topic: "/livox/lidar"
     imu_topic: "/mavros/imu/data_raw"
     time_sync_en: false
-    time_offset_lidar_to_imu: -0.068406
+    time_offset_lidar_to_imu: -0.07625571
 
 mapping:
     extrinsic_est_en: false
-    extrinsic_T: [0.006849, -0.034990, 0.069355]
-    extrinsic_R: [ 0.858277, -0.017062,  0.512903,
-                   0.026414,  0.999591, -0.010949,
-                  -0.512507,  0.022946,  0.858377]
+    extrinsic_T: [0.032600, 0.027755, 0.086446]
+    extrinsic_R: [ 0.856373, -0.003504,  0.516346,
+                   0.007575,  0.999955, -0.005777,
+                  -0.516302,  0.008859,  0.856361]
     imu_body_T: [0.0, 0.0, 0.0]
     imu_body_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 ```
 
 要点：
 
-- 标定时间：2026-10-17 18:14:23，第三次标定的 `Refinement result`
-  （见 `docs/LIDAR_IMU_EXTRINSIC_CALIBRATION.md` 第 14 节）；
-- 这组数值是**原来就为 FAST-LIO 标定的**，不是针对 faster-lio 重新标定；
+- 标定时间：2026-11-13（重装后重新标定，`Final Result`），替换了原先
+  2026-10-17 18:14:23 的 `Refinement result`
+  （两次记录见 `docs/LIDAR_IMU_EXTRINSIC_CALIBRATION.md` 第 14、15 节）；
+- 这组数值同时写入了 FAST-LIO 和 faster-lio 两份配置，两处必须保持一致；
 - `extrinsic_est_en: false`：既然已有离线外参，就不让在线估计把它拉走；
 - `imu_body_R/T` 为单位阵：faster-lio 会额外发布 `/laserMapping/odometry_body`，
   本机 PX4/Mavros IMU 坐标系即机体系；
@@ -212,7 +213,95 @@ roslaunch faster_lio mapping_mid360.launch --dump-params \
 4. 前后左右上下平移，检查里程计方向；
 5. 与 FAST-LIO 同段数据对比轨迹，再考虑接入 EKF 和任务栈。
 
-## 7. 回滚
+## 7. 2026-11-13 重装后重新标定
+
+### 7.1 第一次结果（未通过，已作废）
+
+飞机重装后重新跑了一次 LiDAR_IMU_Init，`Final Result`：
+
+```text
+Rotation LiDAR to IMU    =  33.629932   0.685810 -146.925518 deg
+Translation LiDAR to IMU =   1.365180   0.919982  -0.100021 m
+Time Lag IMU to LiDAR    =  -0.23176084 s
+Bias of Gyroscope        =   0.022484  -0.046725   0.160431 rad/s
+Bias of Accelerometer    =  -0.168845  -0.010041  -0.120353 m/s^2
+Gravity in World Frame   =   2.860045  -5.882787  -6.978986 m/s^2
+```
+
+换算与检查（`R = Rz(yaw)·Ry(pitch)·Rx(roll)`，与 2026-10-17 结果同一约定，已核对复现）：
+
+```text
+R_LI = [-0.837902  0.448836 -0.310590
+        -0.545690 -0.701331  0.458647
+        -0.011969  0.553787  0.832572]
+det(R) = 1.000000, ||RᵀR − I|| ≈ 2.3e-16
+|T_LI| = 1.649 m
+gravity 与 −Z 夹角 = 43.1°, |g| = 9.565 m/s²
+陀螺 Z 零偏 = 0.160 rad/s = 9.2 deg/s
+与 2026-10-17 在用的旋转差 = 159.5°
+时间偏移变化 = 163.4 ms
+```
+
+**结论：未通过验收，禁止用于飞行。** 依据：
+
+- 平移模长 `1.649 m`，在这套机架的 LiDAR/飞控实际安装距离上不可能（在用值是 `0.078 m`）；
+- 重力方向偏离 `-Z` 约 `43°`，说明初始化时整机不水平或初始化阶段在动；
+- 陀螺 Z 零偏 `9.2 deg/s` 远超正常量级；
+- 时间偏移从 `-68 ms` 跳到 `-232 ms`，不是毫秒级变化；
+- 与在用外参旋转差近 `160°`。
+
+最可能的原因：初始化静止段不足/机身不水平、激励过程中 LiDAR 或飞控没有刚性固定、
+或在线 refinement 发散。
+
+处理方式：该结果当时只写入过一份台架配置
+（`faster-lio/config/mid360_px4_recal_20261113.yaml`），未进入任何飞行配置；
+第二次标定通过后该文件已删除，结果只保留在本节记录里。
+
+### 7.2 第二次结果（通过，已采用）
+
+随后按"先校准 PX4 飞控传感器、再重新标定"的流程重跑 LiDAR_IMU_Init，`Final Result`：
+
+```text
+Rotation LiDAR to IMU    =  0.592708  31.084524  0.506819 deg
+Translation LiDAR to IMU =  0.032600  0.027755  0.086446 m
+Time Lag IMU to LiDAR    =  -0.07625571 s
+Bias of Gyroscope        =  0.007520  0.003108 -0.002814 rad/s
+Bias of Accelerometer    = -0.014924  0.027314 -0.001732 m/s^2
+Gravity in World Frame   =  4.754746 -0.016617 -8.584941 m/s^2
+```
+
+换算与检查：
+
+```text
+R_LI = [ 0.856373 -0.003504  0.516346
+         0.007575  0.999955 -0.005777
+        -0.516302  0.008859  0.856361]
+det(R) = 1.000000, ||RᵀR − I|| ≈ 3.4e-16
+|T_LI| = 0.0965 m（2026-10-17 为 0.0780 m，差 7.0 cm）
+与 2026-10-17 在用旋转差 = 1.14°
+时间偏移 = -76.26 ms（比旧值差 7.8 ms）
+陀螺零偏模长 = 0.49 deg/s
+加计零偏模长 = 0.033 m/s^2
+```
+
+重力方向的解释与自洽性核对：LI-Init 的"世界系"是**初始 LiDAR 系**
+（`LI_init.cpp:470`，`Grav_L0 = Rot_Grav_wrt_Init_Lidar × STD_GRAV`），
+所以 `(4.755, -0.017, -8.585)` 本身带约 29° 倾斜是正常的——雷达按约 31° 俯仰安装。
+用新外参把该重力旋转到 IMU 系得到 `(-0.361, 0.069, -9.807)`，
+与竖直方向只差 **2.1°**，与"雷达倾斜 31°、IMU 基本水平"的几何关系一致。
+（第一次失败结果的同样换算无法自洽。）
+
+**结论：通过验收，已采用。**
+
+- 写入 `faster-lio/config/mid360_px4.yaml` 与
+  `FAST_LIO/config/mid360_px4.yaml` 两份配置，`time_offset_lidar_to_imu`
+  同步改为 `-0.07625571`；
+- `~/fasterlio_ws` 已同步，`roslaunch --dump-params` 确认新值生效；
+- 尚未做静止/手持实测，也未飞过；飞行前按第 9 节做点云与里程计检查；
+- 平移比旧值差 7.0 cm，属于重装后的预期变化，但仍建议用尺量核对安装距离；
+- 目前只有一次通过的结果，条件允许时再标 1–2 次确认重复性。
+
+## 8. 回滚
 
 - 代码：删除 `time_offset_lidar_to_imu_` 相关三处改动即可回到上游行为
   （默认 `0.0`，等价于未启用）。

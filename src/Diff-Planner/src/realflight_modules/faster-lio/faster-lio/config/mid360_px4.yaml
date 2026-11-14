@@ -1,10 +1,13 @@
 # faster-lio flight config: Mid-360 + PX4/Pixhawk IMU.
 #
-# Extrinsics and time offset are copied from the LI-Init calibration that the
-# current FAST-LIO flight config (FAST_LIO/config/mid360_px4.yaml) has flown with:
-#   extrinsics / time offset calibrated 2026-10-17 18:14:23.
-# They are NOT newly calibrated for faster-lio; re-run LiDAR_IMU_Init before the
-# next flight and replace both values here (and in the FAST-LIO config).
+# Extrinsics and time offset come from the LI-Init calibration of 2026-11-13
+# (after the airframe was reinstalled), which passed the acceptance checks:
+#   rotation 1.14 deg from the previous accepted result, |T_LI| = 0.0965 m,
+#   time lag -76.26 ms (7.8 ms from the old value), gyro bias 0.49 deg/s,
+#   accel bias 0.033 m/s^2, and gravity consistent with the ~31 deg LiDAR
+#   mount pitch (2.1 deg residual after rotating into the IMU frame).
+# Same values are written to FAST_LIO/config/mid360_px4.yaml.
+# Not flight-verified yet: complete the static / hand-held checks first.
 #
 # faster-lio needs a source-level patch to apply time_offset_lidar_to_imu
 # (upstream only had the coarse time_sync_en); see docs/FASTER_LIO_TIME_OFFSET.md.
@@ -15,8 +18,8 @@ common:
 
     time_sync_en: false # coarse self-sync, only when external sync is impossible; keep off
     # Same convention as FAST-LIO: imu_stamp_corrected = imu_stamp - time_offset.
-    # Negative value: LiDAR clock lags the IMU clock by 68.406 ms.
-    time_offset_lidar_to_imu: -0.068406
+    # Negative value: LiDAR clock lags the IMU clock by 76.256 ms.
+    time_offset_lidar_to_imu: -0.07625571
 
 preprocess:
     lidar_type: 1 # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
@@ -36,11 +39,12 @@ mapping:
     extrinsic_est_en: false
 
     # LiDAR pose expressed in the IMU body frame: p_I = R_LI * p_L + T_LI.
-    # LI-Init refinement result (same as FAST-LIO flight config).
-    extrinsic_T: [0.006849, -0.034990, 0.069355]
-    extrinsic_R: [ 0.858277, -0.017062,  0.512903,
-                   0.026414,  0.999591, -0.010949,
-                  -0.512507,  0.022946,  0.858377]
+    # LI-Init 2026-11-13 result (Euler 0.592708 / 31.084524 / 0.506819 deg),
+    # same as FAST-LIO flight config.
+    extrinsic_T: [0.032600, 0.027755, 0.086446]
+    extrinsic_R: [ 0.856373, -0.003504,  0.516346,
+                   0.007575,  0.999955, -0.005777,
+                  -0.516302,  0.008859,  0.856361]
 
     # faster-lio publishes a second body-frame odometry (PublishOdometryBody).
     # PX4/Mavros IMU frame == body frame here, so identity.
@@ -63,10 +67,16 @@ pcd_save:
 
 path_save_en: false
 feature_extract_enable: false
+# point_filter_num: keep every Nth raw point (3 => 1/3 of the MID-360 points).
 point_filter_num: 3
 max_iteration: 3
-filter_size_surf: 0.5
-filter_size_map: 0.5
+# filter_size_surf: voxel size for the per-scan downsample. This is the main knob for
+# how dense /laserMapping/cloud_registered looks (the published cloud is
+# scan_down_world_ unless publish/dense_publish_en is true). 0.5 m was very sparse.
+filter_size_surf: 0.05
+# filter_size_map: voxel size used when deciding whether a world point is added to
+# the local map; it does not change the published cloud density.
+filter_size_map: 0.15
 cube_side_length: 1000
 
 ivox_grid_resolution: 0.5 # default=0.2

@@ -22,10 +22,11 @@ EKF
 /ekf/ekf_odom
 ```
 
-LiDAR→IMU 标定结果只写入：
+LiDAR→IMU 标定结果写入两处，数值必须保持一致：
 
 ```text
-~/gcs_ws/src/FAST_LIO/config/mid360_px4.yaml
+~/gcs_ws/src/FAST_LIO/config/mid360_px4.yaml                     # 当前飞行用的 FAST-LIO
+~/gcs_ws/src/Diff-Planner/src/realflight_modules/faster-lio/faster-lio/config/mid360_px4.yaml
 ```
 
 当前 EKF 输入的 `/Odometry` 已经由 FAST-LIO2 转换到 IMU/body frame，因此 EKF 中：
@@ -589,3 +590,54 @@ Time lag                = -0.068406 s
 ```text
 /home/nvidia/gcs_ws/src/FAST_LIO/config/mid360_px4.yaml.bak_20261017_181423
 ```
+
+---
+
+## 15. 2026-11-13 重装后重新标定（已采用）
+
+整机重装后先重新校准了 PX4 飞控传感器，再重跑 LiDAR_IMU_Init。
+
+第一次结果未通过验收（平移 1.649 m、重力换到 IMU 系不自洽、陀螺 Z 零偏
+9.2 deg/s），未写入任何飞行配置，记录见 `docs/FASTER_LIO_TIME_OFFSET.md` 第 7.1 节。
+
+第二次 `Final Result`：
+
+```text
+Rotation LiDAR to IMU    =  0.592708  31.084524  0.506819 deg
+Translation LiDAR to IMU =  0.032600  0.027755  0.086446 m
+Time Lag IMU to LiDAR    =  -0.07625571 s
+Bias of Gyroscope        =  0.007520  0.003108 -0.002814 rad/s
+Bias of Accelerometer    = -0.014924  0.027314 -0.001732 m/s^2
+Gravity in World Frame   =  4.754746 -0.016617 -8.584941 m/s^2
+```
+
+齐次变换：
+
+```text
+ 0.856373 -0.003504  0.516346  0.032600
+ 0.007575  0.999955 -0.005777  0.027755
+-0.516302  0.008859  0.856361  0.086446
+ 0.000000  0.000000  0.000000  1.000000
+```
+
+验收数据：
+
+- 与 2026-10-17 在用旋转差约 `1.14°`；
+- 平移模长 `0.0965 m`（旧值 `0.0780 m`，重装后变化 7.0 cm，量级合理）；
+- 时间偏移变化约 `7.8 ms`，毫秒级；
+- 陀螺零偏模长约 `0.49 deg/s`，加计零偏模长约 `0.033 m/s^2`，均在正常量级；
+- `det(R) = 1.000000`，正交误差 `3.4e-16`；
+- 重力换算到 IMU 系为 `(-0.361, 0.069, -9.807)`，与竖直方向差 `2.1°`，
+  与雷达约 31° 安装俯仰的几何关系自洽（LI-Init 的世界系是初始 LiDAR 系）。
+
+写入文件（两处数值一致）：
+
+```text
+~/gcs_ws/src/FAST_LIO/config/mid360_px4.yaml
+~/gcs_ws/src/Diff-Planner/src/realflight_modules/faster-lio/faster-lio/config/mid360_px4.yaml
+```
+
+`time_offset_lidar_to_imu: -0.07625571`。
+
+状态：**已用于配置，尚未做静止/手持实测，未飞行**。
+条件允许时再标定 1–2 次确认重复性；飞行前按第 10 节做点云与里程计检查。

@@ -3,8 +3,9 @@ common:
     imu_topic:  "/mavros/imu/data_raw"
     time_sync_en: false
     # Definition used by FAST-LIO: lidar timestamp + offset = IMU timestamp.
-    # Calibrated by LI-Init on 2026-10-17 18:14:23; FAST-LIO subtracts this value from IMU stamps.
-    time_offset_lidar_to_imu: -0.068406
+    # Calibrated by LI-Init on 2026-11-13 (airframe reinstalled); FAST-LIO
+    # subtracts this value from IMU stamps.
+    time_offset_lidar_to_imu: -0.07625571
 
 preprocess:
     lidar_type: 1
@@ -21,11 +22,14 @@ mapping:
     # Keep false after copying the LI-Init calibration below.
     extrinsic_est_en: false
     # LiDAR pose expressed in the IMU body frame: p_I = R_LI * p_L + T_LI.
-    # Refinement result from LiDAR_IMU_Init; p_I = R_LI * p_L + T_LI.
-    extrinsic_T: [0.006849, -0.034990, 0.069355]
-    extrinsic_R: [ 0.858277, -0.017062,  0.512903,
-                   0.026414,  0.999591, -0.010949,
-                  -0.512507,  0.022946,  0.858377]
+    # LiDAR_IMU_Init Final Result, 2026-11-13 (airframe reinstalled):
+    # Euler 0.592708 / 31.084524 / 0.506819 deg; |T| = 0.0965 m.
+    # Checks: 1.14 deg from the 2026-10-17 accepted rotation, gravity residual
+    # 2.1 deg after rotating into the IMU frame, det(R) = 1.
+    extrinsic_T: [0.032600, 0.027755, 0.086446]
+    extrinsic_R: [ 0.856373, -0.003504,  0.516346,
+                   0.007575,  0.999955, -0.005777,
+                  -0.516302,  0.008859,  0.856361]
 
 publish:
     path_en: true

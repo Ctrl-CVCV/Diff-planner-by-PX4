@@ -1,7 +1,10 @@
 <launch>
 	<!--user configure parameters for ros start-->
 	<arg name="lvx_file_path" default="livox_test.lvx"/>
-	<arg name="bd_list" default="$(env BD_LIST)"/>    
+	<!--bd_list: broadcast code / serial of the LiDAR. Only used when start_lidar:=true;
+	    $(optenv BD_LIST ...) falls back to the serial the flight driver launch uses,
+	    so the file also loads when the env var is not set.-->
+	<arg name="bd_list" default="$(optenv BD_LIST 100000000000000)"/>
 	<arg name="xfer_format" default="1"/> 		<!--0-Pointcloud2(PointXYZRTL), 1-customized pointcloud format-->
 	<arg name="multi_topic" default="0"/> 		<!--0-All LiDARs share the same topic, 1-One LiDAR one topic-->
 	<arg name="data_src" default="0"/> 			<!--0-lidar, others-Invalid data src-->
@@ -16,6 +19,13 @@
 	<arg name="start_lidar" default="true"/>
 	<!--mapping_node_name: must differ from an already running mapping node (e.g. FAST-LIO's laserMapping)-->
 	<arg name="mapping_node_name" default="laserMapping"/>
+	<!--odom_topic/cloud_topic: output topic names. Defaults are the upstream names; the
+	    flight stack passes /Odometry and /cloud_registered so EKF, px4ctrl and the mission
+	    scripts keep working unchanged.-->
+	<arg name="odom_topic" default="/laserMapping/odometry"/>
+	<arg name="cloud_topic" default="/laserMapping/cloud_registered"/>
+	<arg name="body_cloud_topic" default="/laserMapping/cloud_registered_body"/>
+	<arg name="path_topic" default="/laserMapping/path"/>
 	<arg name="cmdline_arg" default="$(arg bd_list)"/>
 	<arg name="msg_frame_id" default="livox_frame"/>
 	<arg name="lidar_bag" default="true"/>
@@ -45,7 +55,12 @@
 	<rosparam command="load" file="$(arg config_file)" />
 
 	<param name="runtime_pos_log_enable" type="bool" value="false" />
-	<node pkg="faster_lio" type="run_mapping_online" name="$(arg mapping_node_name)" output="screen" />
+	<node pkg="faster_lio" type="run_mapping_online" name="$(arg mapping_node_name)" output="screen">
+		<remap from="/laserMapping/odometry" to="$(arg odom_topic)"/>
+		<remap from="/laserMapping/cloud_registered" to="$(arg cloud_topic)"/>
+		<remap from="/laserMapping/cloud_registered_body" to="$(arg body_cloud_topic)"/>
+		<remap from="/laserMapping/path" to="$(arg path_topic)"/>
+	</node>
 
 	<group if="$(arg rviz)">
 		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find faster_lio)/config/rviz/faster_lio.rviz" />
