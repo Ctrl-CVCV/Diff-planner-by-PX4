@@ -1,12 +1,15 @@
 <launch>
+    <arg name="odom_topic" default="/Odometry"/>
+    <arg name="imu_topic" default="/mavros/imu/data"/>
+    <arg name="output_topic" default="/ekf/ekf_odom"/>
     
     <node pkg="ekf" type="ekf" name="ekf" output="screen">
         <!-- <remap from="~imu" to="/mavros/imu/data"/> -->
-        <remap from="~imu" to="/mavros/imu/data"/>
-        <remap from="~bodyodometry" to="/Odometry"/> 
+        <remap from="~imu" to="$(arg imu_topic)"/>
+        <remap from="~bodyodometry" to="$(arg odom_topic)"/>
         <!-- <remap from="~bodyodometry" to="/robot/dlo/odom_node/odom"/>  -->
 
-        <remap from="~ekf_odom" to="/ekf/ekf_odom"/>
+        <remap from="~ekf_odom" to="$(arg output_topic)"/>
 
         <!-- parms -->
         <rosparam file="$(find ekf)/launch/PX4_vio_drone.yaml" command="load" />

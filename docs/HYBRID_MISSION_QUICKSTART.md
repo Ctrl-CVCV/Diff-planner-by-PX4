@@ -218,7 +218,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 rostopic echo /drone_0_mission/state
 ```
 
-## 第 7 步（终端 7，可选）：YOLO 视觉识别
+## 第 7 步：YOLO 视觉识别
 
 队友新加的 `yolo_trt_ros`（USB 相机 + TensorRT 检测）。它只**订阅图像、发布检测结果**，不订阅也不发布任何飞行指令话题，开不开都不影响任务链；但它在 NX 上占 GPU 和 3 个推理线程，所以**不要在空中第一次启动**——先在地面跑起来看一眼负载。
 

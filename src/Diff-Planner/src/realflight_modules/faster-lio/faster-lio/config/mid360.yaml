@@ -1,6 +1,6 @@
 common:
     lid_topic: "/livox/lidar"
-    imu_topic: "/mavros/imu/data"
+    imu_topic: "/mavros/imu/data_raw"
     # imu_topic: "/mavros/imu/data"
 
     time_sync_en: false # ONLY turn on when external time synchronization is really not possible
@@ -28,8 +28,10 @@ mapping:
     # imu_body_R: [ 0.9659258, 0, -0.2588190, 0, 1, 0, 0.2588190, 0, 0.9659258]
     
     # Option 2: /mavros/imu/data
-    extrinsic_T: [0.094614, -0.012512, 0.0437]
-    extrinsic_R: [0.9659258, -0, 0.2588190, 0, 1, 0, -0.2588190, 0, 0.9659258]
+    extrinsic_T: [0.032600, 0.027755, 0.086446]
+    extrinsic_R: [0.856373, -0.003504, 0.516346,
+                  0.007575, 0.999955, -0.005777,
+                  -0.516302, 0.008859, 0.856361]
     imu_body_T: [ 0.0, 0.0, 0.0]
     imu_body_R: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
     # ===================================================================

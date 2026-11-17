@@ -758,7 +758,7 @@ class RuntimeRules(unittest.TestCase):
         self.runner.publishers['land'].publish.assert_not_called()
         self.runner.publishers['command'].publish.assert_not_called()
 
-    def simulate_full_mission(self, respond_c=True, unfinished_c=False, hazard=None):
+    def simulate_full_mission(self, respond_c=True, unfinished_c=False, hazard=None, rescue=None):
         runner, clock = self.runner, self.clock
         self.simulate_takeoff(origin=(10, -3, 0.034))
         takeoff_health, takeoff_get = runner.health, runner.get
@@ -806,6 +806,14 @@ class RuntimeRules(unittest.TestCase):
                 if near:
                     runner.receive(SimpleNamespace(data=json.dumps(dict(
                         count=1, detections=[dict(label='危险品标识', confidence=0.9)]))), 'detections')
+            if rescue:
+                # 模拟在指定航点上方看到"救助人员"；rescue 可以是单个航点或多个航点。
+                points = (rescue,) if isinstance(rescue, str) else tuple(rescue)
+                near = any(math.dist(state['position'], tuple(runner.config['points'][point]['xyz'])) <= 0.1
+                           for point in points)
+                if near:
+                    runner.receive(SimpleNamespace(data=json.dumps(dict(
+                        count=1, detections=[dict(label='救助人员', confidence=0.9)]))), 'detections')
             return state['position'], (0, 0, 0), state['yaw']
 
         def send_goal(label):
@@ -1215,6 +1223,102 @@ class HazardDrop(unittest.TestCase):
         while outcome['ok'] is None and wall.monotonic() < deadline:
             wall.sleep(0.01)
         self.assertTrue(outcome['ok'], '后台线程应把服务结果回填到 outcome')
+
+
+class RescueDropAndGroundOffsetTest(unittest.TestCase):
+    """救援物资降高度测试（dry_run，不投放）与航点地面高度误差 z_offset。"""
+
+    setUp = RuntimeRules.setUp
+    simulate_takeoff = RuntimeRules.simulate_takeoff
+    simulate_full_mission = RuntimeRules.simulate_full_mission
+
+    def run_mission(self):
+        runner, clock = self.runner, self.clock
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.run()
+
+    def rescue_config(self):
+        return self.runner.config['rescue_drop']
+
+    def set_rescue(self, **changes):
+        for config in (self.config, self.runner.config, self.runner.source_config):
+            config['rescue_drop'].update(changes)
+
+    def test_shipped_config_is_rescue_dry_run(self):
+        rescue = self.config['rescue_drop']
+        self.assertTrue(rescue['enabled'], '默认启用救援物资降高度测试')
+        self.assertTrue(rescue['dry_run'], '当前阶段只降高度、不投放')
+        self.assertEqual(list(rescue['points']), ['E', 'F', 'G'])
+        self.assertFalse(rescue['once'], 'E/F/G 各自独立判断')
+
+    def test_detection_at_e_descends_holds_and_climbs_without_push(self):
+        runner = self.runner
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        state, trace, goals = self.simulate_full_mission(rescue='E')
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertIn('DROP_DESCEND', phases)
+        self.assertIn('DROP_PUSH', phases)
+        self.assertIn('DROP_ASCEND', phases, '降高度后必须爬回航点高度再继续任务')
+        runner.begin_push.assert_not_called()
+        floor = runner.origin[2] + self.rescue_config()['height']
+        lowest = min(mission.vector(entry[2].position)[2] for entry in trace
+                     if entry[1] in ('DROP_DESCEND', 'DROP_PUSH'))
+        self.assertAlmostEqual(lowest, floor, places=2)
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(runner.stage, 'LANDING')
+
+    def test_detection_at_two_points_triggers_both(self):
+        runner = self.runner
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        state, trace, _ = self.simulate_full_mission(rescue=('E', 'G'))
+        self.run_mission()
+        starts = [index for index, entry in enumerate(trace)
+                  if entry[1] == 'DROP_DESCEND'
+                  and (index == 0 or trace[index - 1][1] != 'DROP_DESCEND')]
+        self.assertEqual(len(starts), 2, 'once=false 时 E、G 两点都应触发降高度')
+        runner.begin_push.assert_not_called()
+
+    def test_no_detection_does_not_descend(self):
+        runner = self.runner
+        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        state, trace, goals = self.simulate_full_mission()
+        self.run_mission()
+        phases = [entry[1] for entry in trace]
+        self.assertNotIn('DROP_DESCEND', phases)
+        runner.begin_push.assert_not_called()
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(runner.stage, 'LANDING')
+
+    def test_rescue_settings_reject_other_points(self):
+        self.rescue_config()['points'] = ['C']
+        with self.assertRaisesRegex(mission.FlightError, '只允许 E/F/G'):
+            self.runner.rescue_settings()
+
+    def test_z_offset_moves_targets_and_drop_floor(self):
+        runner = self.runner
+        origin = (10.0, -3.0, 0.034)
+        for config in (self.config, runner.config, runner.source_config):
+            config['points']['C']['z_offset'] = 0.07
+            config['hazard_drop']['enabled'] = True
+        resolved = mission.resolve_config(runner.source_config, origin)
+        self.assertAlmostEqual(resolved['points']['C']['xyz'][2], origin[2] + 0.8 + 0.07,
+                               msg='z_offset 必须加到该点高度目标上')
+        self.assertAlmostEqual(resolved['points']['D']['xyz'][2], origin[2] + 0.8,
+                               msg='没有 z_offset 的点不受影响')
+        runner.config, runner.origin = resolved, origin
+        motion = runner.start_drop(origin, 0.0, resolved['points']['C'], 100.0, 'C')
+        self.assertAlmostEqual(motion['target']['xyz'][2],
+                               origin[2] + 0.07 + runner.drop_settings()['height'],
+                               msg='投放/降高度低点要计入该点地面误差')
+
+    def test_z_offset_rejects_implausible_values(self):
+        with self.assertRaisesRegex(ValueError, 'z_offset'):
+            mission.point_z_offset(dict(z_offset=0.5))
+        with self.assertRaisesRegex(ValueError, 'z_offset'):
+            mission.point_z_offset(dict(z_offset=float('nan')))
+        self.assertAlmostEqual(mission.point_z_offset(dict()), 0.0)
 
 
 if __name__ == '__main__':

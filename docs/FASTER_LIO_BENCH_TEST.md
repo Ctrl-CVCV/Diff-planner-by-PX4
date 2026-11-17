@@ -1,5 +1,8 @@
 # faster-lio 测试文档（台架 / 手持，不飞行）
 
+> 2026-11-16 更新：本文的 `~/fasterlio_ws` 是历史独立测试空间，当前飞行入口使用 `~/gcs_ws` 中的实现。
+> 全负载参数、编译目录和排查步骤以 [Faster-LIO 性能排查](FASTER_LIO_PERFORMANCE.md) 为准，不要混用两个 workspace。
+
 > 适用版本：`~/fasterlio_ws`（faster-lio + livox_ros_driver2 + ekf_pose）
 > 配置文件：`faster-lio/config/mid360_px4.yaml`（2026-11-13 标定值）
 > 前置文档：`docs/FASTER_LIO_TIME_OFFSET.md`、`docs/LIDAR_IMU_EXTRINSIC_CALIBRATION.md`
@@ -98,7 +101,7 @@ rostopic hz -w 1000 /mavros/imu/data_raw
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-roslaunch livox_ros_driver2 msg_MID360s.launch
+roslaunch livox_ros_driver2 
 ```
 
 检查（约 10 Hz）：
@@ -119,7 +122,8 @@ source ~/fasterlio_ws/devel/setup.bash
 roslaunch faster_lio mapping_mid360.launch \
   config_file:=$(rospack find faster_lio)/config/mid360_px4.yaml \
   start_lidar:=false \
-  mapping_node_name:=laserMapping_faster
+  mapping_node_name:=laserMapping_faster \
+  rviz:=true
 ```
 
 参数说明：
@@ -184,8 +188,8 @@ rostopic echo -n 1 /laserMapping/odometry/pose/pose/position
 | 日志 | 无 `imu loop back`、无 `bad conversion` |
 | CPU | 单帧耗时 < 100 ms（`top` 看 laserMapping 进程） |
 
-如果里程计频率明显低于 10 Hz，先加大 `ivox_grid_resolution`（例如 0.5 → 0.7）
-或 `point_filter_num`（3 → 4），再测。
+如果里程计频率明显低于 10 Hz，先按 [性能排查](FASTER_LIO_PERFORMANCE.md) 核对有效滤波参数和匹配耗时。
+不要默认增大 `ivox_grid_resolution` 就更快：格内候选点可能增加，需以实际耗时验证。
 
 ## 5. 静止测试（5–10 分钟）
 
@@ -315,6 +319,7 @@ rosbag play ~/compare_ref.bag
 | 里程计静止也在漂 | 外参错误、IMU 零偏大、时间不同步 | 重新标定 / 先做静态 IMU 检查 |
 | 点云重影、地图撕裂 | 时间偏移不准 | 复核 LI-Init 的时间偏移，必要时重标 |
 | 频率掉到 5 Hz 以下 | Jetson CPU 负载 / ivox 分辨率过细 | 加大 `ivox_grid_resolution`、`point_filter_num` |
+| `/Odometry` 只有 2–3 Hz、`header.stamp` 比当前时间老几百秒且越来越旧 | `filter_size_surf` 过小导致单帧 300+ ms，LiDAR 队列积压，里程计实际在"回放"旧数据；EKF 因此看起来冻住 | 调大 `filter_size_surf`（如 0.15）和 `filter_size_map`（如 0.30），重启节点；见 2026-11-14 记录 |
 | launch 报节点重名 | FAST-LIO 还在跑 | 停掉 FAST-LIO，或用 `mapping_node_name` |
 | 与驱动节点冲突 | launch 又启动了一个 `livox_lidar_publisher2` | 用 `start_lidar:=false` |
 | 订阅不到点云 | 驱动发布的是 `livox_ros_driver2/CustomMsg` | 已验证兼容；若仍失败，用 `rostopic info` 核对 |

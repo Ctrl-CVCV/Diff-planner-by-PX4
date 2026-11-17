@@ -1,0 +1,83 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Enabled: true
+  Global Options:
+    Background Color: 30; 30; 30
+    Fixed Frame: camera_init
+    Frame Rate: 10
+  Displays:
+    - Class: rviz/Grid
+      Name: LIO Grid
+      Enabled: true
+      Reference Frame: <Fixed Frame>
+      Cell Size: 0.5
+      Plane Cell Count: 30
+      Color: 100; 100; 100
+    - Class: rviz/PointCloud2
+      Name: Registered Cloud (last 10 seconds)
+      Enabled: true
+      Topic: /cloud_registered
+      Queue Size: 2
+      Style: Points
+      Size (Pixels): 2
+      Decay Time: 10
+      Alpha: 1
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 210; 230; 255
+      Use Fixed Frame: true
+    - Class: rviz/Odometry
+      Name: LIO Odometry
+      Enabled: true
+      Topic: /Odometry
+      Queue Size: 2
+      Keep: 1
+      Position Tolerance: 0
+      Angle Tolerance: 0
+      Shape:
+        Value: Axes
+        Axes Length: 0.4
+        Axes Radius: 0.025
+      Covariance:
+        Value: false
+    - Class: rviz/Path
+      Name: LIO Path
+      Enabled: true
+      Topic: /path
+      Queue Size: 2
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.03
+      Color: 255; 220; 60
+      Alpha: 1
+      Pose Style: None
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 6
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Near Clip Distance: 0.01
+      Pitch: 0.6
+      Yaw: 0.8
+    Saved: ~
+Window Geometry:
+  Width: 1200
+  Height: 800
+  Hide Left Dock: false
+  Hide Right Dock: false

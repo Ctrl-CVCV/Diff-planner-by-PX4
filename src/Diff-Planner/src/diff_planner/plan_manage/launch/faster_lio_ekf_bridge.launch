@@ -1,0 +1,20 @@
+<launch>
+  <arg name="lio_odom_topic" default="/laserMapping/odometry"/>
+  <arg name="imu_topic" default="/mavros/imu/data"/>
+  <arg name="ekf_odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="start_ekf" default="true"/>
+  <arg name="publish_vision" default="false"/>
+  <arg name="vision_topic" default="/mavros/vision_pose/pose"/>
+  <arg name="vision_rate" default="50.0"/>
+  <arg name="vision_max_age" default="0.5"/>
+
+  <include if="$(arg start_ekf)" file="$(find ekf)/launch/ekf_fastlio2.launch">
+    <arg name="odom_topic" value="$(arg lio_odom_topic)"/>
+    <arg name="imu_topic" value="$(arg imu_topic)"/>
+    <arg name="output_topic" value="$(arg ekf_odom_topic)"/>
+  </include>
+
+  <node if="$(arg publish_vision)" pkg="diff_planner" type="ekf_vision_bridge.py"
+        name="ekf_vision_bridge" output="screen"
+        args="--odom $(arg ekf_odom_topic) --topic $(arg vision_topic) --rate $(arg vision_rate) --max-age $(arg vision_max_age)"/>
+</launch>

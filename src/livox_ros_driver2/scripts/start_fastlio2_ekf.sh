@@ -21,6 +21,8 @@ LIO_IMPL="${LIO_IMPL:-fasterlio}"
 FASTERLIO_DIR="$WS/src/Diff-Planner/src/realflight_modules/faster-lio/faster-lio"
 FASTERLIO_CONFIG="$FASTERLIO_DIR/config/mid360_px4.yaml"
 FASTLIO_CONFIG="$WS/src/FAST_LIO/config/mid360_px4.yaml"
+VISION_BRIDGE_SCRIPT="$WS/src/Diff-Planner/src/diff_planner/plan_manage/scripts/ekf_vision_bridge.py"
+VISION_BRIDGE=1
 START_MAVROS=1
 CHECK_ONLY=0
 WAIT_MAVROS=35
@@ -41,11 +43,14 @@ usage() {
      并确认点云话题 /livox/lidar 有实际数据
   5. LIO（默认 faster-lio，--lio fastlio 可切回 FAST-LIO2），输出 /Odometry
   6. EKF，输出 /ekf/ekf_odom
+  7. EKF→MAVROS 视觉位姿桥：/ekf/ekf_odom → /mavros/vision_pose/pose（PX4 外部视觉，
+     是否采用由飞控参数 EKF2_EV_CTRL 决定）
 
 选项：
   --fcu-url URL       MAVROS FCU地址（默认：${FCU_URL}）
   --imu-rate HZ       请求的PX4 IMU消息频率（默认：${IMU_RATE}）
   --lio NAME          定位实现：fasterlio（默认）或 fastlio
+  --no-vision-bridge  不启动 EKF→MAVROS 视觉位姿桥
   --no-mavros         不启动MAVROS，但仍要求现有/mavros话题可用
   --check-only        只检查文件和ROS包，不启动任何节点
   -h, --help          显示帮助
@@ -66,6 +71,7 @@ while (($#)); do
     --lio)
       [[ $# -ge 2 ]] || { echo "错误：--lio 缺少参数" >&2; exit 2; }
       LIO_IMPL="$2"; shift 2 ;;
+    --no-vision-bridge) VISION_BRIDGE=0; shift ;;
     --no-mavros) START_MAVROS=0; shift ;;
     --check-only) CHECK_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -123,6 +129,7 @@ else
     "$FASTLIO_CONFIG"
   )
 fi
+(( VISION_BRIDGE )) && required_files+=("$VISION_BRIDGE_SCRIPT")
 for file in "${required_files[@]}"; do
   [[ -r "$file" ]] || { echo "错误：缺少文件 $file" >&2; exit 1; }
 done
@@ -142,6 +149,11 @@ if (( CHECK_ONLY )); then
     echo "FAST-LIO2配置：$FASTLIO_CONFIG"
   fi
   echo "EKF启动文件：$WS/src/Diff-Planner/src/realflight_modules/faster-lio/ekf_pose/launch/ekf_fastlio2.launch"
+  if (( VISION_BRIDGE )); then
+    echo "视觉位姿桥：$VISION_BRIDGE_SCRIPT（/ekf/ekf_odom → /mavros/vision_pose/pose）"
+  else
+    echo "视觉位姿桥：已禁用（--no-vision-bridge）"
+  fi
   exit 0
 fi
 
@@ -547,6 +559,27 @@ else
   wait_for_message /ekf/ekf_odom "$WAIT_EKF" "融合里程计"
 fi
 
+# 7. EKF -> MAVROS 视觉位姿桥（PX4 外部视觉输入）。
+#    MAVROS 负责 ENU->NED，PX4 是否采用由 EKF2_EV_CTRL 决定；桥本身只读转发。
+#    没数据（例如 LIO 积压导致 /ekf/ekf_odom 时间戳过期）时只告警，不中止启动。
+if (( VISION_BRIDGE )); then
+  if message_available /mavros/vision_pose/pose 3; then
+    echo "复用现有视觉位姿桥。"
+  else
+    start_component vision_bridge python3 "$VISION_BRIDGE_SCRIPT"
+    if ! wait_for_message /mavros/vision_pose/pose 10 "视觉位姿"; then
+      echo "警告：视觉位姿桥已启动但 10s 内没有发布；PX4 拿不到外部视觉。" >&2
+      echo "      检查 /ekf/ekf_odom 是否实时（rostopic delay /ekf/ekf_odom）。" >&2
+    fi
+  fi
+fi
+
+if (( VISION_BRIDGE )); then
+  BRIDGE_NOTE="/ekf/ekf_odom -> /mavros/vision_pose/pose（PX4 按 EKF2_EV_CTRL 决定是否采用）"
+else
+  BRIDGE_NOTE="未启动（--no-vision-bridge）"
+fi
+
 cat <<SUMMARY
 
 ================ 启动完成 ================
@@ -555,6 +588,7 @@ LiDAR       : /livox/lidar
 里程计      : /Odometry
 注册点云    : /cloud_registered
 EKF         : /ekf/ekf_odom
+视觉位姿桥  : $BRIDGE_NOTE
 RViz        : 未启动（rviz:=false）
 
 请在另外一个终端检查：

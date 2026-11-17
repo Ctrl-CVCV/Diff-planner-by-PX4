@@ -96,7 +96,7 @@ Visualization Manager:
           Size (Pixels): 3
           Size (m): 0.05000000074505806
           Style: Points
-          Topic: /laserMapping/cloud_registered
+          Topic: /cloud_registered
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
@@ -124,7 +124,7 @@ Visualization Manager:
           Size (Pixels): 1
           Size (m): 0.009999999776482582
           Style: Points
-          Topic: /laserMapping/cloud_registered
+          Topic: /cloud_registered
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
@@ -193,7 +193,7 @@ Visualization Manager:
             Shaft Length: 0.05000000074505806
             Shaft Radius: 0.05000000074505806
             Value: Axes
-          Topic: /laserMapping/odometry
+          Topic: /Odometry
           Unreliable: false
           Value: true
       Enabled: true
@@ -228,7 +228,7 @@ Visualization Manager:
       Radius: 0.029999999329447746
       Shaft Diameter: 0.4000000059604645
       Shaft Length: 0.4000000059604645
-      Topic: /laserMapping/path
+      Topic: /path
       Unreliable: false
       Value: true
     - Alpha: 1

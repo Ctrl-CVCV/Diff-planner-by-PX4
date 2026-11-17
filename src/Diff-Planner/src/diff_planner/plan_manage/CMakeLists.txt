@@ -33,6 +33,7 @@ catkin_package(
 # 只读的轨迹线发布节点（view_obstacle_map.launch 用 roslaunch 启动）
 catkin_install_python(PROGRAMS
   scripts/flight_path.py
+  scripts/ekf_vision_bridge.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
