@@ -1,0 +1,292 @@
+diff --git a/config/mid360.yaml b/config/mid360.yaml
+--- a/config/mid360.yaml
++++ b/config/mid360.yaml
+@@ -1,6 +1,6 @@
+ common:
+     lid_topic: "/livox/lidar"
+-    imu_topic: "/mavros/imu/data_raw"
++    imu_topic: "/mavros/imu/data"
+     # imu_topic: "/mavros/imu/data"
+ 
+     time_sync_en: false # ONLY turn on when external time synchronization is really not possible
+@@ -28,10 +28,8 @@
+     # imu_body_R: [ 0.9659258, 0, -0.2588190, 0, 1, 0, 0.2588190, 0, 0.9659258]
+     
+     # Option 2: /mavros/imu/data
+-    extrinsic_T: [0.032600, 0.027755, 0.086446]
+-    extrinsic_R: [0.856373, -0.003504, 0.516346,
+-                  0.007575, 0.999955, -0.005777,
+-                  -0.516302, 0.008859, 0.856361]
++    extrinsic_T: [0.094614, -0.012512, 0.0437]
++    extrinsic_R: [0.9659258, -0, 0.2588190, 0, 1, 0, -0.2588190, 0, 0.9659258]
+     imu_body_T: [ 0.0, 0.0, 0.0]
+     imu_body_R: [ 1, 0, 0, 0, 1, 0, 0, 0, 1]
+     # ===================================================================
+@@ -50,8 +48,8 @@
+ feature_extract_enable: false
+ point_filter_num: 3
+ max_iteration: 3
+-filter_size_surf: 0.20
+-filter_size_map: 0.40
++filter_size_surf: 0.5
++filter_size_map: 0.5
+ cube_side_length: 1000
+ 
+ ivox_grid_resolution: 0.5 # default=0.2
+diff --git a/config/mid360_px4.yaml b/config/mid360_px4.yaml
+new file mode 100644
+--- /dev/null
++++ b/config/mid360_px4.yaml
+@@ -0,0 +1,88 @@
++# faster-lio flight config: Mid-360 + PX4/Pixhawk IMU.
++#
++# Extrinsics and time offset come from the LI-Init calibration of 2026-11-13
++# (after the airframe was reinstalled), which passed the acceptance checks:
++#   rotation 1.14 deg from the previous accepted result, |T_LI| = 0.0965 m,
++#   time lag -76.26 ms (7.8 ms from the old value), gyro bias 0.49 deg/s,
++#   accel bias 0.033 m/s^2, and gravity consistent with the ~31 deg LiDAR
++#   mount pitch (2.1 deg residual after rotating into the IMU frame).
++# Same values are written to FAST_LIO/config/mid360_px4.yaml.
++# Not flight-verified yet: complete the static / hand-held checks first.
++#
++# faster-lio needs a source-level patch to apply time_offset_lidar_to_imu
++# (upstream only had the coarse time_sync_en); see docs/FASTER_LIO_TIME_OFFSET.md.
++
++common:
++    lid_topic: "/livox/lidar"
++    imu_topic: "/mavros/imu/data_raw"
++
++    time_sync_en: false # coarse self-sync, only when external sync is impossible; keep off
++    # Same convention as FAST-LIO: imu_stamp_corrected = imu_stamp - time_offset.
++    # Negative value: LiDAR clock lags the IMU clock by 76.256 ms.
++    time_offset_lidar_to_imu: -0.07625571
++
++preprocess:
++    lidar_type: 1 # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
++    scan_line: 4
++    blind: 0.5
++    time_scale: 1e-9 # MID-360 uses nanosecond timestamp
++
++mapping:
++    acc_cov: 0.1
++    gyr_cov: 0.1
++    b_acc_cov: 0.0001
++    b_gyr_cov: 0.0001
++    fov_degree: 360
++    det_range: 100.0
++    # Keep false after copying the offline calibration below; online estimation
++    # would drift the extrinsics away from the calibrated values.
++    extrinsic_est_en: false
++
++    # LiDAR pose expressed in the IMU body frame: p_I = R_LI * p_L + T_LI.
++    # LI-Init 2026-11-13 result (Euler 0.592708 / 31.084524 / 0.506819 deg),
++    # same as FAST-LIO flight config.
++    extrinsic_T: [0.032600, 0.027755, 0.086446]
++    extrinsic_R: [ 0.856373, -0.003504,  0.516346,
++                   0.007575,  0.999955, -0.005777,
++                  -0.516302,  0.008859,  0.856361]
++
++    # faster-lio publishes a second body-frame odometry (PublishOdometryBody).
++    # PX4/Mavros IMU frame == body frame here, so identity.
++    imu_body_T: [0.0, 0.0, 0.0]
++    imu_body_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
++
++publish:
++    path_publish_en: true
++    scan_publish_en: true
++    dense_publish_en: false
++    scan_bodyframe_pub_en: true
++    scan_effect_pub_en: false
++    tf_imu_frame: "imu"
++    tf_world_frame: "camera_init"
++    tf_body_frame: "body"
++
++pcd_save:
++    pcd_save_en: false # true would dump every scan to PCD on shutdown
++    interval: -1
++
++path_save_en: false
++feature_extract_enable: false
++# point_filter_num: keep every Nth raw point (3 => 1/3 of the MID-360 points).
++point_filter_num: 3
++max_iteration: 3
++# filter_size_surf: voxel size for the per-scan downsample. This is the main knob for
++# how dense /laserMapping/cloud_registered looks (the published cloud is
++# scan_down_world_ unless publish/dense_publish_en is true) AND for CPU cost.
++# 0.5 m was very sparse; 0.05 m (2026-11-14) made run_mapping_online take ~330 ms
++# per scan on this Jetson: odometry fell to ~3 Hz, its lidar queue backed up and
++# the published stamps ran hundreds of seconds behind, which made the EKF look
++# frozen. 0.15 m keeps 10 Hz; go denser only if the CPU has headroom.
++filter_size_surf: 0.20
++# filter_size_map: voxel size used when deciding whether a world point is added to
++# the local map; it does not change the published cloud density but also costs CPU.
++filter_size_map: 0.40
++cube_side_length: 1000
++
++ivox_grid_resolution: 0.5 # default=0.2
++ivox_nearby_type: 18 # 6, 18, 26
++esti_plane_threshold: 0.1 # default=0.1
+diff --git a/config/rviz/faster_lio.rviz b/config/rviz/faster_lio.rviz
+--- a/config/rviz/faster_lio.rviz
++++ b/config/rviz/faster_lio.rviz
+@@ -96,7 +96,7 @@
+           Size (Pixels): 3
+           Size (m): 0.05000000074505806
+           Style: Points
+-          Topic: /cloud_registered
++          Topic: /laserMapping/cloud_registered
+           Unreliable: false
+           Use Fixed Frame: true
+           Use rainbow: true
+@@ -124,7 +124,7 @@
+           Size (Pixels): 1
+           Size (m): 0.009999999776482582
+           Style: Points
+-          Topic: /cloud_registered
++          Topic: /laserMapping/cloud_registered
+           Unreliable: false
+           Use Fixed Frame: true
+           Use rainbow: true
+@@ -193,7 +193,7 @@
+             Shaft Length: 0.05000000074505806
+             Shaft Radius: 0.05000000074505806
+             Value: Axes
+-          Topic: /Odometry
++          Topic: /laserMapping/odometry
+           Unreliable: false
+           Value: true
+       Enabled: true
+@@ -228,7 +228,7 @@
+       Radius: 0.029999999329447746
+       Shaft Diameter: 0.4000000059604645
+       Shaft Length: 0.4000000059604645
+-      Topic: /path
++      Topic: /laserMapping/path
+       Unreliable: false
+       Value: true
+     - Alpha: 1
+diff --git a/include/laser_mapping.h b/include/laser_mapping.h
+--- a/include/laser_mapping.h
++++ b/include/laser_mapping.h
+@@ -144,6 +144,9 @@
+ 
+     /// options
+     bool time_sync_en_ = false;
++    // Static LiDAR-to-IMU time offset from offline calibration (e.g. LiDAR_IMU_Init),
++    // same convention as FAST-LIO: imu_stamp_corrected = imu_stamp - time_offset.
++    double time_offset_lidar_to_imu_ = 0.0;
+     double timediff_lidar_wrt_imu_ = 0.0;
+     double last_timestamp_lidar_ = 0;
+     double lidar_end_time_ = 0;
+diff --git a/launch/mapping_mid360.launch b/launch/mapping_mid360.launch
+--- a/launch/mapping_mid360.launch
++++ b/launch/mapping_mid360.launch
+@@ -1,7 +1,10 @@
+ <launch>
+ 	<!--user configure parameters for ros start-->
+ 	<arg name="lvx_file_path" default="livox_test.lvx"/>
+-	<arg name="bd_list" default="$(env BD_LIST)"/>    
++	<!--bd_list: broadcast code / serial of the LiDAR. Only used when start_lidar:=true;
++	    $(optenv BD_LIST ...) falls back to the serial the flight driver launch uses,
++	    so the file also loads when the env var is not set.-->
++	<arg name="bd_list" default="$(optenv BD_LIST 100000000000000)"/>
+ 	<arg name="xfer_format" default="1"/> 		<!--0-Pointcloud2(PointXYZRTL), 1-customized pointcloud format-->
+ 	<arg name="multi_topic" default="0"/> 		<!--0-All LiDARs share the same topic, 1-One LiDAR one topic-->
+ 	<arg name="data_src" default="0"/> 			<!--0-lidar, others-Invalid data src-->
+@@ -9,6 +12,13 @@
+ 	<arg name="output_type" default="0"/>
+ 	<arg name="rviz_enable" default="false"/>
+ 	<arg name="rosbag_enable" default="false"/>
++	<!--config_file: use config/mid360.yaml for bench tests, config/mid360_px4.yaml for
++	    the PX4 flight setup (calibrated extrinsics + LiDAR/IMU time offset)-->
++	<arg name="config_file" default="$(find faster_lio)/config/mid360.yaml"/>
++	<!--start_lidar=false: when the Livox driver is already running (e.g. flight stack)-->
++	<arg name="start_lidar" default="true"/>
++	<!--mapping_node_name: must differ from an already running mapping node (e.g. FAST-LIO's laserMapping)-->
++	<arg name="mapping_node_name" default="laserMapping"/>
+ 	<arg name="cmdline_arg" default="$(arg bd_list)"/>
+ 	<arg name="msg_frame_id" default="livox_frame"/>
+ 	<arg name="lidar_bag" default="true"/>
+@@ -27,16 +37,18 @@
+ 	<param name="enable_lidar_bag" type="bool" value="$(arg lidar_bag)"/>
+ 	<param name="enable_imu_bag" type="bool" value="$(arg imu_bag)"/>
+ 
+-	<node name="livox_lidar_publisher2" pkg="livox_ros_driver2"
+-	      type="livox_ros_driver2_node" required="true"
+-	      output="screen" args="$(arg cmdline_arg)"/>
+-	
++	<group if="$(arg start_lidar)">
++		<node name="livox_lidar_publisher2" pkg="livox_ros_driver2"
++		      type="livox_ros_driver2_node" required="true"
++		      output="screen" args="$(arg cmdline_arg)"/>
++	</group>
++
+ 	<!-- Launch file for Livox Mid360 LiDAR -->
+ 	<arg name="rviz" default="false" />
+-	<rosparam command="load" file="$(find faster_lio)/config/mid360.yaml" />
++	<rosparam command="load" file="$(arg config_file)" />
+ 
+ 	<param name="runtime_pos_log_enable" type="bool" value="false" />
+-	<node pkg="faster_lio" type="run_mapping_online" name="laserMapping" output="screen" />
++	<node pkg="faster_lio" type="run_mapping_online" name="$(arg mapping_node_name)" output="screen" />
+ 
+ 	<group if="$(arg rviz)">
+ 		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find faster_lio)/config/rviz/faster_lio.rviz" />
+diff --git a/src/laser_mapping.cc b/src/laser_mapping.cc
+--- a/src/laser_mapping.cc
++++ b/src/laser_mapping.cc
+@@ -71,6 +71,7 @@
+     nh.param<float>("esti_plane_threshold", options::ESTI_PLANE_THRESHOLD, 0.1);
+     nh.param<std::string>("map_file_path", map_file_path_, "");
+     nh.param<bool>("common/time_sync_en", time_sync_en_, false);
++    nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu_, 0.0);
+     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
+     nh.param<double>("filter_size_map", filter_size_map_min_, 0.0);
+     nh.param<double>("cube_side_length", cube_len_, 200);
+@@ -112,6 +113,7 @@
+ 
+     LOG(INFO) << "imu_body_R:\n" << R_I_B_;
+     LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
++    LOG(INFO) << "time_offset_lidar_to_imu: " << time_offset_lidar_to_imu_ << " s";
+ 
+     LOG(INFO) << "lidar_type " << lidar_type;
+     if (lidar_type == 1) {
+@@ -183,6 +185,8 @@
+         options::NUM_MAX_ITERATIONS = yaml["max_iteration"].as<int>();
+         options::ESTI_PLANE_THRESHOLD = yaml["esti_plane_threshold"].as<float>();
+         time_sync_en_ = yaml["common"]["time_sync_en"].as<bool>();
++        time_offset_lidar_to_imu_ = yaml["common"]["time_offset_lidar_to_imu"] ?
++                                    yaml["common"]["time_offset_lidar_to_imu"].as<double>() : 0.0;
+ 
+         filter_size_surf_min = yaml["filter_size_surf"].as<float>();
+         filter_size_map_min_ = yaml["filter_size_map"].as<float>();
+@@ -235,6 +239,7 @@
+ 
+     LOG(INFO) << "imu_body_R:\n" << R_I_B_;
+     LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
++    LOG(INFO) << "time_offset_lidar_to_imu: " << time_offset_lidar_to_imu_ << " s";
+ 
+     LOG(INFO) << "lidar_type " << lidar_type;
+     if (lidar_type == 1) {
+@@ -473,9 +478,12 @@
+     publish_count_++;
+     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
+ 
++    // Static calibration offset (FAST-LIO convention): shift the IMU clock onto the LiDAR clock.
++    double stamp = msg_in->header.stamp.toSec() - time_offset_lidar_to_imu_;
+     if (abs(timediff_lidar_wrt_imu_) > 0.1 && time_sync_en_) {
+-        msg->header.stamp = ros::Time().fromSec(timediff_lidar_wrt_imu_ + msg_in->header.stamp.toSec());
+-    }
++        stamp += timediff_lidar_wrt_imu_;
++    }
++    msg->header.stamp = ros::Time().fromSec(stamp);
+ 
+     double timestamp = msg->header.stamp.toSec();
+ 
+@@ -978,4 +986,4 @@
+ 
+     LOG(INFO) << "finish done";
+ }
+-}  // namespace faster_lio
++}  // namespace faster_lio
+\ No newline at end of file

@@ -1,0 +1,78 @@
+{
+  "date": "2026-11-17",
+  "repository_package": "src/Diff-Planner/src/realflight_modules/faster-lio/faster-lio",
+  "runtime_package": "/home/nvidia/fasterlio_ws/src/faster-lio",
+  "files_changed_between_repository_and_runtime": [
+    {
+      "path": "config/mid360.yaml",
+      "repository_sha256": "69ca33e1da3f536e9241695c1dc93a2ba73939e1dd3c241be141deed8760b841",
+      "runtime_sha256": "b98e84e64f317d2f46c7ee47a06e4c6b19dc9ddaeb176dfc2b9e6f566b760fa4"
+    },
+    {
+      "path": "config/mid360_px4.yaml",
+      "repository_sha256": null,
+      "runtime_sha256": "4632bf54a7eff6a7bbd667c67d4900f11478f00ac2709e22931b7281bb66e47f"
+    },
+    {
+      "path": "config/rviz/faster_lio.rviz",
+      "repository_sha256": "9122c3a00a5990775b9e2802b24a27b99b58813bf57a046de67614bb516c0a32",
+      "runtime_sha256": "02ec359e66d3469e20c7d7ff692e45c16e85327d2985b3cba4b2b611e725d125"
+    },
+    {
+      "path": "include/laser_mapping.h",
+      "repository_sha256": "e46b223e29959b4673094f0d620a80d63e4d5b5e7f68a90b54ddd77848137c61",
+      "runtime_sha256": "7a5d3535bf7e7e064c865b800c63a9d59f15336636bc4e6585dac10e4d917ade"
+    },
+    {
+      "path": "launch/mapping_mid360.launch",
+      "repository_sha256": "3e40c80bab080df85523fc94ecbbef9c0a89cdde297a3c8b27c6a20f358bdc05",
+      "runtime_sha256": "478f9e660bde4bcf5ddb13e893b8d01b606d812c921c35652bd3c9c18d765246"
+    },
+    {
+      "path": "src/laser_mapping.cc",
+      "repository_sha256": "79a743b9c7ccf695b91167c8f2f7d4f209ca5571856f748acd8981dffbf29289",
+      "runtime_sha256": "6e6dcda9f453dd9eddba38defff88d547a2dc4a0c328fc60ab5ad8f1779e4e64"
+    }
+  ],
+  "ground_measurement_90_seconds": {
+    "pid": 50086,
+    "command": "/home/nvidia/fasterlio_ws/devel/lib/faster_lio/run_mapping_online --traj_log_file=/tmp/faster_lio_020_040_trajectory.txt __name:=laserMapping_faster __log:=/tmp/faster_lio_020_040_ros.log ",
+    "duration_s": 90.003385256,
+    "topics": {
+      "/livox/lidar": {
+        "count": 900,
+        "arrival_hz": 10.000003352615133,
+        "stamp_hz": 10.000038311546039,
+        "stamp_span_s": 89.89965558052063,
+        "age_median_s": 0.10175979137420654,
+        "age_p95_s": 0.10252928733825684,
+        "age_first10s_median_s": 0.10188305377960205,
+        "age_last10s_median_s": 0.10180127620697021,
+        "max_arrival_gap_s": 0.10602260500036209,
+        "stamp_nonincreasing": 0
+      },
+      "/laserMapping/odometry": {
+        "count": 900,
+        "arrival_hz": 10.001107822379689,
+        "stamp_hz": 10.00001682988709,
+        "stamp_span_s": 89.8998486995697,
+        "age_median_s": 0.022892355918884277,
+        "age_p95_s": 0.03347325325012207,
+        "age_first10s_median_s": 0.024453401565551758,
+        "age_last10s_median_s": 0.02373373508453369,
+        "max_arrival_gap_s": 0.1266768650002632,
+        "stamp_nonincreasing": 0
+      }
+    },
+    "parameters": {
+      "/filter_size_surf": 0.2,
+      "/filter_size_map": 0.4,
+      "/point_filter_num": 3,
+      "/ivox_max_points_per_grid": null,
+      "/mapping/extrinsic_est_en": false,
+      "/common/time_offset_lidar_to_imu": -0.07625571
+    },
+    "process_cpu_percent_one_core_100": 86.37452889008698,
+    "system_cpu_busy_percent": 47.34137093429705
+  }
+}
