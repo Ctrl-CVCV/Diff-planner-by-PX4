@@ -475,7 +475,7 @@ class YoloTrtNode(object):
         self.detector = YoloEngine(self.engine_path,
                                    context_count=self.infer_threads)
         label_names = str(rospy.get_param(
-            '~label_names', '其它标识,危险品标识,救助人员'))
+            '~label_names', '危险品标识,其它标识,救助人员'))
         overrides = [name.strip() for name in label_names.split(',')
                      if name.strip()]
         for class_id in sorted(self.detector.labels):
