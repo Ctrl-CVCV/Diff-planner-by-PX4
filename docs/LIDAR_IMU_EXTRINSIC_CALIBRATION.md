@@ -598,7 +598,7 @@ Time lag                = -0.068406 s
 整机重装后先重新校准了 PX4 飞控传感器，再重跑 LiDAR_IMU_Init。
 
 第一次结果未通过验收（平移 1.649 m、重力换到 IMU 系不自洽、陀螺 Z 零偏
-9.2 deg/s），未写入任何飞行配置，记录见 `docs/FASTER_LIO_TIME_OFFSET.md` 第 7.1 节。
+9.2 deg/s），未写入任何飞行配置。旧试验记录保存在 Git 检查点 `1dbfede`；现行启动配置见 [Faster-LIO 当前指南](FASTER_LIO_GUIDE.md)。
 
 第二次 `Final Result`：
 

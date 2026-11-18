@@ -1,6 +1,6 @@
 # EKF → MAVROS → PX4 视觉位姿桥
 
-> 2026-11-17 补充：Faster-LIO 恢复官方版本后，下文旧一键启动脚本的 Faster-LIO 分支暂不适用。请使用 [官方基线上的独立 EKF/视觉桥入口](FASTER_LIO_EKF_BRIDGE_TEST.md)。本页涉及的 PX4 参数和历史故障结论不代表当前运行状态；观察 ROS 定位数据无需先修改飞控参数。发布视觉位姿可能影响飞控估计，不应视为完全只读操作。
+> 2026-11-17 补充：当前 Faster-LIO 源码和一键启动入口已统一到 `gcs_ws`，地面编译与独立 EKF/视觉桥使用方式见 [Faster-LIO 当前指南](FASTER_LIO_GUIDE.md)。本页涉及的 PX4 参数和历史故障结论不代表当前运行状态；观察 ROS 定位数据无需先修改飞控参数。发布视觉位姿可能影响飞控估计，不应视为完全只读操作。
 
 > 更新：2026-11-14
 > 相关：`ekf_vision_bridge.py`、`start_fastlio2_ekf.sh` 第 7 步

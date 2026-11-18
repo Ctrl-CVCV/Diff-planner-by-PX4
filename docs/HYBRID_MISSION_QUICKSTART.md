@@ -5,7 +5,7 @@
 **这是步骤摘录，不代表已经验证过实机飞行。** 每一条的实际含义、边界和异常处理以手册为准；起飞前必须完成手册第 8 节的 `--check` 与第 13 节核对，异常时飞手优先接管。
 
 ```text
-FAST-LIO2 → /Odometry → EKF → /ekf/ekf_odom
+Faster-LIO（默认） → /Odometry → EKF → /ekf/ekf_odom
                             ↓
 Diff-Planner → traj_server → /drone_0_mission/planner_cmd
                                       ↓
@@ -21,7 +21,7 @@ YOLO → /yolo/detections → hybrid_mission.py（判定危险品）→ /servo/p
 | 终端 | 内容 | 何时启动 | 何时停 |
 |---|---|---|---|
 | 0 | 建本轮目录、任务参数副本 | 最先 | 准备完即可关 |
-| 1 | MAVROS + 雷达 + FAST-LIO2 + EKF | 第 1 步 | 落地锁桨后 |
+| 1 | MAVROS + 雷达 + Faster-LIO + EKF + 视觉位姿桥 | 第 1 步 | 落地锁桨后 |
 | 2 | PX4Ctrl | 第 2 步 | 落地锁桨后 |
 | 3 | 混合任务专用 Planner | 第 3 步 | 落地锁桨后 |
 | 4 | **录 bag（地图监视）** | 第 4 步，**执行任务之前** | 落地锁桨后再录 5～10 秒 |
@@ -55,7 +55,7 @@ cmake --build "$HOME/gcs_ws/build" --target px4ctrl_node diff_planner_node traj_
 bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 ```
 
-它启动 roscore、MAVROS、Livox MID360s、FAST-LIO2/RViz、EKF；**不启动 PX4Ctrl、不解锁、不起飞**。落地锁桨前**不要在这个终端按 Ctrl+C**，会断掉定位与飞控通信链。
+它启动 roscore、MAVROS、Livox MID360s、Faster-LIO、EKF 和视觉位姿桥；默认不启动 RViz，**不启动 PX4Ctrl、不解锁、不起飞**。视觉位姿可能影响飞控估计。地面编译、切回 FAST-LIO2 的 `--lio fastlio` 和仅观察的 `--no-vision-bridge` 见 [Faster-LIO 当前指南](FASTER_LIO_GUIDE.md)。落地锁桨前**不要在这个终端按 Ctrl+C**，会断掉定位与飞控通信链。
 
 另开检查终端确认：
 

@@ -19,7 +19,7 @@
 | 终端 | 内容 | 保持运行到何时 |
 |---|---|---|
 | 0 | 创建本轮目录、检查/保存任务参数 | 准备完成即可 |
-| 1 | MAVROS、雷达、FAST-LIO2、EKF 一键启动 | 落地锁桨后 |
+| 1 | MAVROS、雷达、Faster-LIO、EKF 和视觉位姿桥一键启动 | 落地锁桨后 |
 | 2 | PX4Ctrl | 落地锁桨后 |
 | 2b | px4_servo（`/servo/push`；投放默认启用时必需） | 落地锁桨后 |
 | 3 | 混合任务专用 Planner/轨迹服务器 | 落地锁桨后 |
@@ -38,7 +38,7 @@
 正常控制链应为：
 
 ```text
-FAST-LIO2 → /Odometry → EKF → /ekf/ekf_odom
+Faster-LIO（默认） → /Odometry → EKF → /ekf/ekf_odom
                             ↓
 Diff-Planner → traj_server → /drone_0_mission/planner_cmd
                                       ↓
@@ -116,13 +116,13 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 不加 `--execute` 或 `--check` 时只检查配置、显示任务，不连接 ROS、不起飞。后续预检和执行都用这同一份副本。
 
-## 3. 终端 1：启动 MAVROS、雷达、FAST-LIO2 和 EKF
+## 3. 终端 1：启动 MAVROS、雷达、Faster-LIO 和 EKF
 
 ```bash
 bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 ```
 
-该脚本按需启动 roscore，随后启动 MAVROS、PX4 IMU 频率保持、Livox MID360s、FAST-LIO2/RViz、EKF。**它不启动 PX4Ctrl，不解锁，不发起飞请求。** 日志位于 `~/gcs_ws/log/fastlio2_ekf_<时间>/`。
+该脚本按需启动 roscore，随后启动 MAVROS、PX4 IMU 频率设置、Livox MID360s、Faster-LIO、EKF 和视觉位姿桥；默认不启动 RViz。**它不启动 PX4Ctrl，不解锁，不发起飞请求；视觉位姿可能影响飞控估计。** 地面编译、来源检查、切回 FAST-LIO2 的 `--lio fastlio` 和仅观察的 `--no-vision-bridge` 见 [Faster-LIO 当前指南](FASTER_LIO_GUIDE.md)。日志位于 `~/gcs_ws/log/fastlio2_ekf_<时间>/`。
 
 默认飞控连接为 `/dev/ttyACM0:921600`，请求 IMU 200 Hz；如本机连接不同，先核实再使用脚本的 `--fcu-url` 参数。已有这些节点时不重复启动；必要的重启仅在地面锁桨状态进行。
 
@@ -265,7 +265,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/record_di
 
 ### 7.1 直接复制：打开当前 RAW 和膨胀障碍地图
 
-**前提：** 已按第 3、5 节启动雷达/FAST-LIO2/EKF 和 `run_exp_hybrid_mission.launch`，并保持它们运行。只看地图不需要启动 PX4Ctrl 或执行起飞脚本，也不需要发航点。节点已运行时不要重复启动。
+**前提：** 已按第 3、5 节启动雷达/Faster-LIO/EKF 和 `run_exp_hybrid_mission.launch`，并保持它们运行。只看地图不需要启动 PX4Ctrl 或执行起飞脚本，也不需要发航点。节点已运行时不要重复启动。
 
 新开终端执行下面两行；**这条命令不依赖 `FLIGHT_DIR`，也不会起飞或发目标**：
 
