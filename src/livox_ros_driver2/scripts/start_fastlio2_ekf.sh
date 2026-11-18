@@ -106,11 +106,31 @@ else
 fi
 (( START_MAVROS )) && required_packages+=(mavros)
 for pkg in "${required_packages[@]}"; do
-  if ! rospack find "$pkg" >/dev/null 2>&1; then
+  if ! package_path="$(rospack find "$pkg")"; then
     echo "错误：ROS包 '$pkg' 不可见。请重新编译并 source $WS_SETUP" >&2
     exit 1
   fi
+  case "$pkg" in
+    livox_ros_driver2|ekf|faster_lio|fast_lio)
+      case "$(readlink -f "$package_path")" in
+        "$(readlink -f "$WS")/src/"*) ;;
+        *) echo "错误：$pkg 来自 $package_path，不属于 $WS/src；请在新终端仅加载本工作区。" >&2; exit 1 ;;
+      esac ;;
+  esac
 done
+
+if [[ "$LIO_IMPL" == fasterlio ]]; then
+  FASTERLIO_BINARY="$WS/devel/lib/faster_lio/run_mapping_online"
+  [[ -x "$FASTERLIO_BINARY" ]] || {
+    echo "错误：缺少 $FASTERLIO_BINARY，请先在 $WS 编译 faster_lio。" >&2
+    exit 1
+  }
+  FASTERLIO_LIBRARY="$(ldd "$FASTERLIO_BINARY" | awk '$1 == "libfaster_lio.so" {print $3}')"
+  if [[ ! -f "$FASTERLIO_LIBRARY" ]] || [[ "$(readlink -f "$FASTERLIO_LIBRARY")" != "$(readlink -f "$WS/devel/lib/libfaster_lio.so")" ]]; then
+    echo "错误：Faster-LIO 动态库不是 $WS/devel/lib/libfaster_lio.so（当前：$FASTERLIO_LIBRARY）。请检查工作区加载顺序并重新编译。" >&2
+    exit 1
+  fi
+fi
 
 required_files=(
   "$WS/src/livox_ros_driver2/launch_ROS1/$LIVOX_LAUNCH"
@@ -144,6 +164,9 @@ if (( CHECK_ONLY )); then
   echo "Livox驱动：roslaunch livox_ros_driver2 $LIVOX_LAUNCH"
   echo "Livox配置：主机 $LIVOX_HOST_IP，雷达 $LIVOX_DEVICE_IP"
   if [[ "$LIO_IMPL" == fasterlio ]]; then
+    echo "faster-lio源码：$(rospack find faster_lio)"
+    echo "faster-lio程序：$FASTERLIO_BINARY"
+    echo "faster-lio动态库：$FASTERLIO_LIBRARY"
     echo "faster-lio配置：$FASTERLIO_CONFIG"
   else
     echo "FAST-LIO2配置：$FASTLIO_CONFIG"

@@ -1,0 +1,84 @@
+# faster-lio flight config: Mid-360 + PX4/Pixhawk IMU.
+#
+# Extrinsics and time offset come from the LI-Init calibration of 2026-11-13
+# (after the airframe was reinstalled), which passed the acceptance checks:
+#   rotation 1.14 deg from the previous accepted result, |T_LI| = 0.0965 m,
+#   time lag -76.26 ms (7.8 ms from the old value), gyro bias 0.49 deg/s,
+#   accel bias 0.033 m/s^2, and gravity consistent with the ~31 deg LiDAR
+#   mount pitch (2.1 deg residual after rotating into the IMU frame).
+# Same values are written to FAST_LIO/config/mid360_px4.yaml.
+# Not flight-verified yet: complete the static / hand-held checks first.
+#
+# faster-lio needs a source-level patch to apply time_offset_lidar_to_imu
+# (upstream only had the coarse time_sync_en); see docs/FASTER_LIO_GUIDE.md.
+
+common:
+    lid_topic: "/livox/lidar"
+    imu_topic: "/mavros/imu/data_raw"
+
+    time_sync_en: false # coarse self-sync, only when external sync is impossible; keep off
+    # Same convention as FAST-LIO: imu_stamp_corrected = imu_stamp - time_offset.
+    # Negative value: LiDAR clock lags the IMU clock by 76.256 ms.
+    time_offset_lidar_to_imu: -0.07625571
+
+preprocess:
+    lidar_type: 1 # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
+    scan_line: 4
+    blind: 0.5
+    time_scale: 1e-9 # MID-360 uses nanosecond timestamp
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree: 360
+    det_range: 100.0
+    # Keep false after copying the offline calibration below; online estimation
+    # would drift the extrinsics away from the calibrated values.
+    extrinsic_est_en: false
+
+    # LiDAR pose expressed in the IMU body frame: p_I = R_LI * p_L + T_LI.
+    # LI-Init 2026-11-13 result (Euler 0.592708 / 31.084524 / 0.506819 deg),
+    # same as FAST-LIO flight config.
+    extrinsic_T: [0.032600, 0.027755, 0.086446]
+    extrinsic_R: [ 0.856373, -0.003504,  0.516346,
+                   0.007575,  0.999955, -0.005777,
+                  -0.516302,  0.008859,  0.856361]
+
+    # faster-lio publishes a second body-frame odometry (PublishOdometryBody).
+    # PX4/Mavros IMU frame == body frame here, so identity.
+    imu_body_T: [0.0, 0.0, 0.0]
+    imu_body_R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+publish:
+    path_publish_en: true
+    scan_publish_en: true
+    dense_publish_en: false
+    scan_bodyframe_pub_en: true
+    scan_effect_pub_en: false
+    tf_imu_frame: "imu"
+    tf_world_frame: "camera_init"
+    tf_body_frame: "body"
+
+pcd_save:
+    pcd_save_en: false # true would dump every scan to PCD on shutdown
+    interval: -1
+
+path_save_en: false
+feature_extract_enable: false
+# point_filter_num: keep every Nth raw point (3 => 1/3 of the MID-360 points).
+point_filter_num: 3
+max_iteration: 3
+# filter_size_surf: voxel size for the per-scan downsample. This is the main knob for
+# how dense /laserMapping/cloud_registered looks (the published cloud is
+# scan_down_world_ unless publish/dense_publish_en is true) AND for CPU cost.
+filter_size_surf: 0.20
+# filter_size_map: voxel size used when deciding whether a world point is added to
+# the local map; it does not change the published cloud density but also costs CPU.
+filter_size_map: 0.40
+cube_side_length: 1000
+
+ivox_grid_resolution: 0.5 # default=0.2
+ivox_nearby_type: 18 # 6, 18, 26
+esti_plane_threshold: 0.1 # default=0.1

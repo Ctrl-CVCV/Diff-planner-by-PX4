@@ -71,6 +71,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
     nh.param<float>("esti_plane_threshold", options::ESTI_PLANE_THRESHOLD, 0.1);
     nh.param<std::string>("map_file_path", map_file_path_, "");
     nh.param<bool>("common/time_sync_en", time_sync_en_, false);
+    nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu_, 0.0);
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
     nh.param<double>("filter_size_map", filter_size_map_min_, 0.0);
     nh.param<double>("cube_side_length", cube_len_, 200);
@@ -112,6 +113,7 @@ bool LaserMapping::LoadParams(ros::NodeHandle &nh) {
 
     LOG(INFO) << "imu_body_R:\n" << R_I_B_;
     LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
+    LOG(INFO) << "time_offset_lidar_to_imu: " << time_offset_lidar_to_imu_ << " s";
 
     LOG(INFO) << "lidar_type " << lidar_type;
     if (lidar_type == 1) {
@@ -183,6 +185,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
         options::NUM_MAX_ITERATIONS = yaml["max_iteration"].as<int>();
         options::ESTI_PLANE_THRESHOLD = yaml["esti_plane_threshold"].as<float>();
         time_sync_en_ = yaml["common"]["time_sync_en"].as<bool>();
+        time_offset_lidar_to_imu_ = yaml["common"]["time_offset_lidar_to_imu"] ?
+                                    yaml["common"]["time_offset_lidar_to_imu"].as<double>() : 0.0;
 
         filter_size_surf_min = yaml["filter_size_surf"].as<float>();
         filter_size_map_min_ = yaml["filter_size_map"].as<float>();
@@ -235,6 +239,7 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
 
     LOG(INFO) << "imu_body_R:\n" << R_I_B_;
     LOG(INFO) << "imu_body_T: " << t_I_B_.transpose();
+    LOG(INFO) << "time_offset_lidar_to_imu: " << time_offset_lidar_to_imu_ << " s";
 
     LOG(INFO) << "lidar_type " << lidar_type;
     if (lidar_type == 1) {
@@ -473,9 +478,12 @@ void LaserMapping::IMUCallBack(const sensor_msgs::Imu::ConstPtr &msg_in) {
     publish_count_++;
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
 
+    // Static calibration offset (FAST-LIO convention): shift the IMU clock onto the LiDAR clock.
+    double stamp = msg_in->header.stamp.toSec() - time_offset_lidar_to_imu_;
     if (abs(timediff_lidar_wrt_imu_) > 0.1 && time_sync_en_) {
-        msg->header.stamp = ros::Time().fromSec(timediff_lidar_wrt_imu_ + msg_in->header.stamp.toSec());
+        stamp += timediff_lidar_wrt_imu_;
     }
+    msg->header.stamp = ros::Time().fromSec(stamp);
 
     double timestamp = msg->header.stamp.toSec();
 

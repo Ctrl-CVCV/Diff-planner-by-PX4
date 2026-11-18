@@ -1,5 +1,5 @@
 <launch>
-  <arg name="lio_odom_topic" default="/laserMapping/odometry"/>
+  <arg name="lio_odom_topic" default="/Odometry"/>
   <arg name="imu_topic" default="/mavros/imu/data"/>
   <arg name="ekf_odom_topic" default="/ekf/ekf_odom"/>
   <arg name="start_ekf" default="true"/>
