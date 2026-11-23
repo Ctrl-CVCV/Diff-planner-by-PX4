@@ -39,6 +39,7 @@ Faster-LIO 当前选定的无 IVox 上限版本、实机配置与启动入口统
 - [2026-10-21 LIO 中断后 EKF 上漂分析](FLIGHT_ANALYSIS_20261021_210844.md)
 - [2026-10-20 航点后仍悬停分析](FLIGHT_ANALYSIS_20261020_2145.md)
 - [2026-11-17 当前版本地面测试检查点](checkpoints/faster_lio_20261117/README.md)
+- [2026-11-23 YOLO fix_v8n 模型检查点](checkpoints/yolo_20261123_fix/README.md)
 - [工作区 Git 管理、编译和日志排除](WORKSPACE_GIT.md)
 
 ## 历史部署资料（不是当前默认参数或替代操作清单）
