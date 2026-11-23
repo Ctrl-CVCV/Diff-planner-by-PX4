@@ -474,13 +474,31 @@ class YoloTrtNode(object):
 
         self.detector = YoloEngine(self.engine_path,
                                    context_count=self.infer_threads)
-        label_names = str(rospy.get_param(
-            '~label_names', '危险品标识,其它标识,救助人员'))
-        overrides = [name.strip() for name in label_names.split(',')
-                     if name.strip()]
-        for class_id in sorted(self.detector.labels):
-            if class_id < len(overrides):
-                self.detector.labels[class_id] = overrides[class_id]
+        # 优先按 engine 元数据里的英文类别名映射，避免 ~label_names 的顺序
+        # 与模型 class id 不一致（2026-11-20 前曾出现 0/1 颠倒，导致“其它标识”
+        # 被显示成“危险品标识”，任务误触发投放）。
+        canonical = {'danger_sign': '危险品标识',
+                     'other_warning': '其它标识',
+                     'head': '救助人员'}
+        engine_names = dict(self.detector.labels)
+        mapped = {class_id: canonical[name] for class_id, name in engine_names.items()
+                  if name in canonical}
+        if mapped and len(mapped) == len(engine_names):
+            self.detector.labels.update(mapped)
+            rospy.loginfo('labels mapped from engine metadata: %s',
+                          ', '.join('%d=%s' % item
+                                    for item in sorted(self.detector.labels.items())))
+        else:
+            # 未知模型：退回按顺序覆盖的旧方式
+            label_names = str(rospy.get_param(
+                '~label_names', '危险品标识,其它标识,救助人员'))
+            overrides = [name.strip() for name in label_names.split(',')
+                         if name.strip()]
+            for class_id in sorted(self.detector.labels):
+                if class_id < len(overrides):
+                    self.detector.labels[class_id] = overrides[class_id]
+            rospy.logwarn('engine 类别名不是已知的 danger_sign/other_warning/head，'
+                          '按 ~label_names 顺序映射：%s', overrides)
         self._label_font = _load_label_font()
         self._label_chips = {}
         rospy.loginfo('display labels: %s',
