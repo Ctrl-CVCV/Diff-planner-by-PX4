@@ -13,7 +13,9 @@
        comma-separated by class id. -->
   <arg name="label_names" default="危险品标识,其它标识,救助人员"/>
   <arg name="nms_iou" default="0.60"/>
-  <arg name="batch_timeout" default="0.1"/>
+  <!-- TensorRT inference rate cap; the camera may keep publishing faster. -->
+  <arg name="infer_fps" default="10.0"/>
+  <arg name="batch_timeout" default="0.03"/>
   <arg name="infer_threads" default="3"/>
   <!-- Local preview is throttled: at 15W the GPU cannot composite 60 FPS preview
        and run 60 FPS inference at the same time. Raise display_fps (e.g. 30/60)
@@ -44,6 +46,7 @@
     <param name="conf_thres" value="$(arg conf_thres)" type="double"/>
     <param name="label_names" value="$(arg label_names)" type="str"/>
     <param name="nms_iou" value="$(arg nms_iou)" type="double"/>
+    <param name="infer_fps" value="$(arg infer_fps)" type="double"/>
     <param name="batch_timeout" value="$(arg batch_timeout)" type="double"/>
     <param name="infer_threads" value="$(arg infer_threads)" type="int"/>
     <param name="display_fps" value="$(arg display_fps)" type="double"/>

@@ -458,6 +458,11 @@ class YoloTrtNode(object):
         self.infer_threads = int(rospy.get_param('~infer_threads', 3))
         if not 1 <= self.infer_threads <= 4:
             raise ValueError('infer_threads must be in [1, 4]')
+        self.infer_fps = float(rospy.get_param('~infer_fps', 10.0))
+        if not math.isfinite(self.infer_fps) or not 1.0 <= self.infer_fps <= 120.0:
+            raise ValueError('infer_fps must be in [1, 120]')
+        self._infer_interval = 1.0 / self.infer_fps
+        self._next_infer_time = None
         self.log_period = float(rospy.get_param('~log_period', 1.0))
         if not math.isfinite(self.log_period) or self.log_period < 0:
             raise ValueError('log_period must be non-negative')
@@ -566,16 +571,16 @@ class YoloTrtNode(object):
                       self.detector.output_shape[1], len(self.detector.labels),
                       self.conf_thres, self.nms_iou)
         rospy.loginfo('pipeline: %d slots, %d infer workers, batch timeout %.0f ms, '
-                      'display %.0f FPS | %s -> detections %s, preview %s',
+                      'infer %.0f FPS, display %.0f FPS | %s -> detections %s, preview %s',
                       len(self.detector.slots), self.infer_threads,
-                      self.batch_timeout * 1000.0, self.display_fps_target,
+                      self.batch_timeout * 1000.0, self.infer_fps,
+                      self.display_fps_target,
                       self.image_topic, self.detections_topic, self.preview_topic)
 
     def _on_image(self, message):
         now = time.monotonic()
         with self.frame_cond:
             self.frame_sequence += 1
-            self.frame_queue.append((self.frame_sequence, now, message))
             if self.last_frame_time is not None:
                 delta = now - self.last_frame_time
                 if delta > 0:
@@ -583,6 +588,12 @@ class YoloTrtNode(object):
                     self.camera_fps = (instant if self.camera_fps == 0.0
                                        else 0.9 * self.camera_fps + 0.1 * instant)
             self.last_frame_time = now
+            # Cap the rate of frames handed to inference (camera may run faster).
+            if self._next_infer_time is not None and now < self._next_infer_time:
+                return
+            self._next_infer_time = max(
+                (self._next_infer_time or now) + self._infer_interval, now)
+            self.frame_queue.append((self.frame_sequence, now, message))
             self.frame_cond.notify()
 
     def _take_frame(self, timeout):
