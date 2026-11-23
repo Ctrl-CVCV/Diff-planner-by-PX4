@@ -157,23 +157,24 @@ rostopic echo -n 1 /ekf/flight_path | grep frame_id   # 应为 world
 ## 第 6 步之前（终端 8）：投放舵机 px4_servo —— 不起就拒绝起飞
 
 `hybrid_mission.yaml` 里 `hazard_drop/enabled: true`（2026-10-31 起默认开启），任务预检会等
-`/servo/push` 服务；**节点没起时会直接报下面的错误并停止**：
+`/servo3/push` 等投放服务；**节点没起时会直接报下面的错误并停止**：
 
 ```text
-[ERROR] 任务停止：hazard_drop 已启用但投放服务 /servo/push 不可用（timeout exceeded while waiting for service /servo/push）；先启动 px4_servo
+[ERROR] 任务停止：hazard_drop 已启用但投放服务 /servo3/push 不可用（timeout exceeded while waiting for service /servo3/push）；先启动 px4_servo
 ```
 
 启动（MAVROS 已由第 1 步起来；只在地面、拆桨或载荷已固定的状态下启动）：
 
 ```bash
-roslaunch px4_servo servo_aux_pwm.launch
+roslaunch px4_servo payload_servos.launch
 ```
 
-启动日志里应看到自检行，并且 `ready` 为 `true` 才能动作：
+它启动四路物资舵机（PWM_MAIN5..8，服务 `/servo1`…`/servo4`，`hold_s=2 s` 自动回位）。
+启动日志里应看到四个通道各自的自检行（区间 500..2500 µs、push 全部可用），
+`/servoN/state` 的 `ready` 为 `true` 才能动作：
 
 ```text
-AUX6：输出功能 306（Offboard Actuator Set 6），由 DO_SET_ACTUATOR 的 param6 驱动；
-区间 500..2500 us（中点 1500）；rest 500 us；push 1400 us（归一化 -0.100）；收起归一化 -1.000；上锁输出 500 us
+rostopic echo -n 1 /servo3/state
 ```
 
 另开检查终端核对：
@@ -197,7 +198,8 @@ rosservice call /mavros/param/get "{param_id: 'PWM_AUX_DIS6'}"   # 必须是 500
 
 ## 第 6 步（终端 6）：预检，然后执行
 
-先只读预检（不起飞、不注册指令发布端）：
+先只读预检（不起飞、不注册指令发布端）。预检会额外检查定位实时性：`/Odometry` 时间戳落后、
+频率过低、或最近 30 秒 EKF 报过 `odom time out of buffer`，都会直接拒绝起飞：
 
 ```bash
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py 

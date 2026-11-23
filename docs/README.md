@@ -11,6 +11,7 @@ Faster-LIO 当前选定的无 IVox 上限版本、实机配置与启动入口统
 | 目的 | 文档 |
 |---|---|
 | 当前 Faster-LIO：统一源码、0.20/0.40 参数、地面编译、EKF/视觉桥、点云里程计 RViz、录包回放 | [Faster-LIO 当前指南](FASTER_LIO_GUIDE.md) |
+| 图形界面：启动定位/控制节点、任务脚本、航点一键打点、RViz、录包、摄像头录像 | [GCS 控制台](GCS_CONSOLE.md) |
 | 只要命令清单：启动 → 看 RViz → 录 bag → 预检 → 执行 → 停录制 | [混合任务最简步骤](HYBRID_MISSION_QUICKSTART.md) |
 | 所有为保守飞行改过的参数：当前值、原值、文件:行、含义 | [保守飞行参数总表](CONSERVATIVE_FLIGHT_PARAMS.md) |
 | 当前混合任务完整操作：EKF → PX4Ctrl → 专用 Planner → 先录包 → 程控起飞 → B/C/D → 降落与隔离回放 | [混合任务起飞与录包全流程](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md) |
@@ -25,6 +26,7 @@ Faster-LIO 当前选定的无 IVox 上限版本、实机配置与启动入口统
 |---|---|
 | 摄像头请求 120 FPS、持续观看与可见高度测试、10 秒 YOLO 图片采集 | [视觉测试与图片采集](CAMERA_120FPS_YOLO_COLLECTION.md) |
 | AUX6 舵机（推料机构）：飞控参数 → 单测 → dry_run → 未解锁核对 → 拆桨解锁实测 → 带料标定 | [AUX6 舵机测试全流程](PX4_SERVO_AUX6_TEST_RUNBOOK.md) |
+| 四路物资舵机（MAIN5..8）单步/顺序测试工具，含 ready 状态与故障处理 | [物资舵机测试](PAYLOAD_SERVO_TEST.md) |
 | EKF → MAVROS → PX4 视觉位姿桥：把 `/ekf/ekf_odom` 送进 PX4（含 PX4 参数与验证步骤） | [PX4 视觉位姿桥](PX4_VISION_POSE_BRIDGE.md) |
 | 外参与时间偏移标定 | [LiDAR/IMU标定](LIDAR_IMU_EXTRINSIC_CALIBRATION.md) |
 

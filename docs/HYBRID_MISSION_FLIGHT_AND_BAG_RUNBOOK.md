@@ -176,18 +176,19 @@ rostopic echo -n 1 /px4ctrl/state
 
 ## 4.1 终端 2b：启动舵机（危险品投放默认启用，必需）
 
-`hazard_drop/enabled` 自 2026-10-31 起为 `true`，任务预检会等 `/servo/push`，**舵机节点没起就拒绝起飞**。落地锁桨后再停。
+`hazard_drop/enabled` 自 2026-10-31 起为 `true`，任务预检会等它的投放服务（默认 `/servo3/push`），**舵机节点没起就拒绝起飞**。落地锁桨后再停。
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-roslaunch px4_servo servo_aux_pwm.launch
+roslaunch px4_servo payload_servos.launch
 ```
 
-本 launch 默认 `hold_s=0.0`：舵机推出去后**保持不收回**，直到 `/servo/retract`、下一次动作指令或飞控上锁输出。检查终端核对：
+本 launch 启动四路物资舵机（PWM_MAIN5..8，服务 `/servo1`…`/servo4`），默认 `hold_s=2.0`：
+每次动作保持 2 秒后自动回到 500 µs。检查终端核对：
 
 ```bash
-rostopic echo -n 1 -p /servo/state
-rosservice call /servo/reload
+rostopic echo -n 1 -p /servo3/state
+rosservice call /servo3/reload
 ```
 
 自检行应显示 `区间 500..2500 us（中点 1500）... push 1400 us（归一化 -0.100）... rest 500 us`；`ready: true` 才能动作。上锁时舵机应停在收起位——若 `PWM_AUX_DIS6` 不是 500（本机曾读到 2500），先按 [px4_servo 说明](../src/px4_servo/README.md) 改参数，否则上锁会把舵机顶在推出位。不需要投放时用 `--no-hazard-drop` 执行任务，不必启动本节点。

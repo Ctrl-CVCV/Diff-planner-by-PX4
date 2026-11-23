@@ -33,7 +33,15 @@ rescue_drop:
   timeout: 20.0
   push_wait: 2.5
   max_age: 0.5
-  service: /servo/push # dry_run 时不会调用
+  # dry_run=true 时整段不会被执行；测试通过后按顺序投放 2 号 →（下放）→ 3 号 → 4 号
+  payloads:
+    - steps:
+        - {services: [/servo4/push], hold: 3.0}                    # 2 号
+    - steps:
+        - {services: [/servo1/push, /servo2/push], hold: 3.0}      # 下放 3/4 号
+        - {services: [/servo3/push], hold: 3.0}                    # 3 号
+    - steps:
+        - {services: [/servo4/push], hold: 3.0}                    # 4 号
 ```
 
 航点高度补偿（默认 0，需要按实测地面填写）：
@@ -56,7 +64,7 @@ roslaunch yolo_trt_ros yolo_trt.launch
 节点日志应打印：
 
 ```text
-display labels: 0=其它标识, 1=危险品标识, 2=救助人员
+display labels: 0=危险品标识, 1=其它标识, 2=救助人员
 ```
 
 另开终端：
@@ -72,9 +80,10 @@ rostopic echo -n 1 /yolo/detections
 
 ### 3.2 决定本次是否做危险品投放
 
-`hazard_drop` 默认也是开启的，预检会要求 `/servo/push` 服务可用。**本轮只测救援降高度、
-不做危险品投放时，执行和预检都加 `--no-hazard-drop`**，这样不会等舵机服务、也不会在 C/D
-触发投放。
+`hazard_drop` 默认也是开启的，预检会要求它的投放服务 `/servo3/push` 可用。**本轮只测救援
+降高度、不做危险品投放时，执行和预检都加 `--no-hazard-drop`**，这样不会等舵机服务、
+也不会在 C/D 触发投放。救援的 `dry_run: true` 不要求舵机服务，预检不会检查
+`/servo4/push` 等。
 
 ### 3.3 离线预览（不需要 ROS）
 
@@ -137,7 +146,7 @@ rostopic echo /drone_0_mission/state
 | 0–3 s | 到点稳定悬停（`mission/arrival_dwell`） |
 | 3 s 起 | 检查投票；已确认目标 → `DROP_DESCEND` |
 | 3–11 s | 以 ≤0.15 m/s 从航点高度降到离地 0.15 m（约 0.65 m 高度差，参考时长约 8 s） |
-| +2.5 s | `DROP_PUSH`：低空保持，**测试模式不调用 `/servo/push`** |
+| +2.5 s | `DROP_PUSH`：低空保持，**测试模式不调用任何舵机** |
 | 约 8 s | `DROP_ASCEND` 爬回航点高度，继续飞往下一点 |
 
 未确认目标时：从到点起最多等 `wait_timeout`（10 s），然后按原任务流飞走，不下降。
@@ -146,7 +155,7 @@ rostopic echo /drone_0_mission/state
 
 ```text
 已稳定检测到"救助人员"（rescue_drop），下降到离地 0.15m ...
-测试模式（dry_run）：已降到离地 ... 不调用 /servo/push、不投放
+测试模式（dry_run）：已降到离地 ... 不调用 /servo1../servo4、不投放
 救援物资降高度测试结束（dry_run，未投放），已爬回 ... 继续飞往 ...
 ```
 
@@ -192,13 +201,20 @@ rostopic pub -r 20 /yolo/detections std_msgs/String \
 
 ### 5.2 怎么测
 
-**方法 A：尺量法（推荐，最可靠）**
+**方法 A：地面放置读 EKF（与 GCS 控制台的默认打点模式一致）**
+
+1. 在起飞点记录 EKF 原点（任务预检后会发布 `origin_world`；没有就按 0,0,0 近似）；
+2. 把飞机平放在 C 点对应的地面上，等 `/ekf/ekf_odom` 稳定后读 z；
+3. `z_offset = 实测 z − 原点 z`，就是该点地面相对起飞原点的高度（实测 C 点约 0.033 m）。
+4. 同理逐点测量 D/E/F/G。GCS 控制台"地面放置（推荐）"模式会直接算出这个值。
+
+**方法 B：尺量法（没有定位时使用）**
 
 1. 在起飞点 A 的地面放一根水平基准（铝合金型材、水平尺或拉紧的细线），用水准泡调平；
 2. 依次到 C、D、E（以及需要补偿的点），用钢尺量"基准线到该点地面"的垂直距离；
 3. 与 A 点的读数相减，差值就是该点的 `z_offset`。
 
-**方法 B：搬飞机读 EKF 高度（快速估算）**
+**方法 C：手持搬运读 EKF（粗略，仅作交叉核对）**
 
 把未上电的飞机平放在各点地面上，读 `/ekf/ekf_odom` 的 z，与起飞原点 z 相减。
 手持搬运会让 LIO 漂移，只能当粗估；测完回到 A 点，读数应回到接近 0，否则说明漂移太大、
@@ -266,7 +282,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | E/F/G 完全不下降 | YOLO 没运行 / 标签不是"救助人员" / 置信度不足 | `rostopic hz /yolo/detections`，核对 label 与 confidence |
 | 画面里有目标但不触发 | 离图像中心最近的是别的类别（比如"其它标识"），中心目标才参与判定 | 让目标位于画面中央，或调整悬停位置 |
 | 只悬停不下降，10 s 后飞走 | 投票未达 `vote_ratio`，或检测断更超 `max_age` | 看日志"命中 x 帧"；检查 YOLO 帧率/延迟 |
-| 预检报 `/servo/push` 不可用 | `hazard_drop` 仍启用 | 加 `--no-hazard-drop`（本轮不测危险品时） |
+| 预检报 `/servo3/push` 不可用 | `hazard_drop` 仍启用 | 加 `--no-hazard-drop`（本轮不测危险品时） |
 | 预检报航点未实测 | `measured: false` | 实测后改 `true`，不要为了跑通删标记 |
 | 下降高度看起来不对 | `height` 与 `z_offset` 混淆 | `height` 是离地高度，`z_offset` 是地面高差 |
 | 填 0.7 报配置错误 | 超过 ±0.30 上限 | 确认单位是米、正负号含义 |

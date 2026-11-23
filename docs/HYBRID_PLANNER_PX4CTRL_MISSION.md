@@ -490,40 +490,94 @@ LIO 必须仍收到消息，并通过基于本机 `time.monotonic()` 接收时�
 
 本节的判据与进近逻辑只经过离线单元测试（`tests/test_hybrid_mission.py`），**尚未实飞验证**。
 
-## 11. 危险品投放（2026-10-31 起默认启用）
+## 11. 物资投放机构与两种模式（2026-11-20 更新）
 
-`hazard_drop/enabled: true`（临时关闭用 `--no-hazard-drop`）。默认只在 C、D 两点投放，全程最多一次（`once: true`）；哪一点先确认就在哪一点投，另一点不会再投。
+四路舵机都挂在 Pixhawk 的 I/O PWM OUT（实际接口 **MAIN5..8**），由 `px4_servo` 的四个实例驱动，
+服务前缀 `/servo1` … `/servo4`，`hold_s=2 s`：动作后自动回到 500 µs。启动：
 
-流程：到 C/D 后，先满足 `mission/arrival_dwell`（3 s）的到点稳定悬停计时，再要求：
+```bash
+roslaunch px4_servo payload_servos.launch
+```
 
-- 已连续稳定悬停 ≥ `hazard_drop/hover_seconds`（3 s）；
-- 最近 `vote_frames`（15）帧里，**离图像中心最近的那个目标**是 `label`（"危险品"，子串匹配）且置信度 ≥ `min_confidence`（0.70）的帧数比例 ≥ `vote_ratio`（60%）；
-- 最近一帧检测不超过 `max_age`（0.5 s）。
+（GCS 控制台的"舵机控制"按钮执行同一条命令。）
 
-满足后进入 `DROP_DESCEND`：在位置控制下从该航点高度降到离地 `height`（0.15 m，x/y 仍指着该航点，速度 ≤ `speed` 0.15 m/s），到位后调用 `/servo/push`，进入 `DROP_PUSH` 保持 `push_wait`（2.5 s），再 `DROP_ASCEND` 爬回该航点高度，继续原任务流。舵机节点（`px4_servo`）用 `hold_s=0` 启动：**推出后不自动收回**，一直保持到 `/servo/retract`、下一次动作指令或飞控上锁输出（`PWM_AUX_DIS6`）。投放失败只告警、不中止飞行；爬回超时按保护降落处理。
+| 逻辑输出 | 实际接口 | 脉宽 | 服务 |
+| --- | --- | --- | --- |
+| 1 号输出（下放） | MAIN5 | 500→1143 | `/servo1/push` |
+| 2 号输出（下放） | MAIN6 | 500→1143 | `/servo2/push` |
+| 3 号输出 | MAIN7 | 500→2500 | `/servo3/push`（1 号消防、3 号救援） |
+| 4 号输出 | MAIN8 | 500→2500 | `/servo4/push`（2 号救援、4 号救援） |
 
-与 3 秒悬停的关系：C/D 的 3 s 是**最短**悬停。检测没确认时，脚本会继续悬停等待，最多到 `wait_timeout`（10 s）再放弃并按原任务流飞走（不会无限等）；C、D 各算各的。E、F、G 属于救援物资计划（见第 12 节），与危险品投放互不影响。
+飞控侧参数（上锁、拆桨后修改，改完回读确认）：
 
-运行前提：`px4_servo` 必须已启动（预检会等 `/servo/push`，不可用则拒绝起飞）；`/yolo/detections` 没有数据时预检只告警，飞行照常进行但不会投放。投放逻辑只经过离线单元测试（`tests/test_hybrid_mission.py` 的 `HazardDrop`），**尚未实飞验证**。
+```text
+PWM_MAIN_FUNC5..8 = 301 / 302 / 303 / 304     # Offboard Actuator Set 1..4（任意 301..308 均可，四路必须唯一）
+PWM_MAIN_MIN5..8  = 500
+PWM_MAIN_MAX5..8  = 2500
+PWM_MAIN_DIS5..8  = 500                        # 上锁输出 = 收起位
+PWM_MAIN_FAIL5..8 = 500
+PWM_MAIN_RATE      ≈ 50
+```
 
-## 12. 救援物资降高度测试（2026-11-14 起默认启用，不投放）
+投放动作完全由配置描述，每一步 `{services: [...], hold: 秒}`：
+
+```yaml
+hazard_drop:
+  steps:
+    - services: [/servo3/push]
+      hold: 3.0
+  offset_body: [0.075, 0.0]        # 1 号挂点在机体中心前方 7.5cm
+rescue_drop:
+  payloads:
+    - steps: [{services: [/servo4/push], hold: 3.0}]
+      offset_body: [-0.075, 0.0]   # 2 号在后方 7.5cm
+    - steps: [{services: [/servo1/push, /servo2/push], hold: 3.0},
+              {services: [/servo3/push], hold: 3.0}]
+      offset_body: [0.075, 0.0]    # 3 号在前方
+    - steps: [{services: [/servo4/push], hold: 3.0}]
+      offset_body: [-0.075, 0.0]   # 4 号在后方
+```
+
+`offset_body: [前, 左]`（米）是物资挂点相对**机体中心**的位置。投放时脚本把机体目标
+反向平移同样的距离（按当前航向旋转），让挂点而不是机体中心对准航点：1、3 号在中心前方
+7.5 cm，机体要后移 7.5 cm；2、4 号在后方 7.5 cm，机体要前移 7.5 cm。EKF 原点按机体中心
+处理。日志会打印"投放挂点偏移 … 机体目标修正 …"，`--check`/离线预览也会显示。
+
+同一步骤里的服务依次调用（两路同时下放时相差几毫秒，实际视为同步）；保持 `hold` 秒后
+进入下一步，所有步骤完成才爬回。
+
+**两种模式**
+
+- 只投消防物资：`rescue_drop/enabled: false`（或 `--no-rescue-drop`）。只有 C/D 确认危险品时
+  投放 1 号（`hazard_drop/once: true`，全程一次）。
+- 消防 + 救援：两个都启用。危险品仍按上一条投 1 号；救援在 E/F/G 每确认一次"救助人员"，
+  按 `rescue_drop/payloads` 顺序消耗：第 1 次投 2 号，第 2 次先下放 3/4 号再投 3 号，
+  第 3 次投 4 号，用完即止。某个点没检测到就继续任务，不消耗物资。
+
+流程仍是 `DROP_DESCEND → DROP_PUSH（逐步）→ DROP_ASCEND`；`dry_run: true` 时只降高度、
+保持 `push_wait` 秒，不调用任何舵机（当前救援测试模式）。
+
+预检要求：启用的计划里所有 `services` 都存在，否则拒绝起飞；`/yolo/detections` 没数据只告警。
+舵机动作失败只记录、不中止飞行；爬回超时按保护降落处理。救援物资在第一次执行步骤时就计为
+已消耗（即使服务调用失败），不会在后续航点自动重投同一个物资——失败信息会写进日志。
+
+**检测有效区域（2026-11-22）**：单帧判定只接受中心落在图像中间带的目标，排除最上方、
+最下方各一段。`detection/exclude_top_ratio`、`exclude_bottom_ratio` 默认都是 0.25，
+即 `cy` 必须在 `0.25H–0.75H` 之间；悬停时相机画面里"前面一个格子"的目标常出现在
+上/下边缘，不再参与判定，避免误触发投放。比例按现场画面调整（单项限制 0–0.45）。
+
+## 12. 救援物资投放（默认仍为 dry_run 测试）
 
 `rescue_drop/enabled: true`、`rescue_drop/dry_run: true`（临时关闭用 `--no-rescue-drop`）。
-默认在 **E、F、G** 三点检测 `label: 救助人员`（子串匹配），判定方式与危险品相同（中心目标 +
-置信度 + 最近 `vote_frames` 帧投票 + `max_age`）。`once: false`：三个点各自独立判断，
-先检测到的点触发后，其余点仍会继续检测。
+默认在 **E、F、G** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
+最近 `vote_frames` 帧投票 + `max_age`）。`once: false`：三个点各自独立判断。
 
-触发后进入与投放相同的 `DROP_DESCEND → DROP_PUSH → DROP_ASCEND` 流程，**但 `dry_run`
-为 true 时不调用舵机、不投放**：只降到离地 `height`（0.15 m）、保持 `push_wait`（2.5 s）、
-再爬回该点高度继续任务，日志会写明"测试模式（dry_run）"。到点后最多等 `wait_timeout`
-（10 s）再继续，不中止飞行。
+当前阶段的 `dry_run: true` 只降到离地 `height`、保持 `push_wait`、再爬回，不调用舵机；
+日志会写明"测试模式（dry_run）"。测试通过后把 `dry_run` 改成 `false` 即按第 11 节的
+`payloads` 顺序真实投放。
 
-当前阶段就是"识别到目标只降高度"的测试；测试通过后把 `dry_run` 改成 `false` 才进入真实
-投放。单点多次投放（一次任务投多个物资）尚未实现：现在的 `once: false` 只表示 E/F/G
-各点可各触发一次。
-
-该逻辑只经过离线单元测试（`tests/test_hybrid_mission.py` 的 `RescueDropAndGroundOffsetTest`），
-**尚未实飞验证**；默认开启会让 E/F/G 每点多等最多 10 s，实测没问题后再决定是否常开。
+注意：真实模式下，第 2 次救援触发会在同一个点执行"下放 3/4 号 + 投 3 号"两步，低空停留
+时间约为两段 `hold` 之和；这段时间飞机保持在 `height` 高度，现场要留足安全区。
 
 ## 13. 航点地面高度误差 z_offset（2026-11-14）
 
@@ -544,5 +598,32 @@ points:
 - I 点降落进近高度（`landing/approach_height` 同样计入）。
 
 这样配置的 `height` 始终表示"相对该点地面的离地高度"。`z_offset` 需要实测得到
-（例如悬停读 EKF 高度减去设定高度，或用测距/尺量），不要用飞行误差反推。
+（推荐把飞机放在该点地面上读 `/ekf/ekf_odom` 的 z，减去起飞原点的 z；GCS 控制台的"地面放置"打点模式直接按这个方式计算。不要用飞行误差反推）。
 非法值（非有限数、|z_offset| > 0.30）会在离线预览/`--check` 阶段直接报错。
+
+
+## 14. 起飞前实时性硬门禁（2026-11-21）
+
+2026-11-20 事故的直接前因是 faster-lio 积压 10–15 s、EKF 报 `odom time out of buffer`，
+任务仍然起飞。任务脚本的预检（`--check` 与 `--execute` 共用）现在增加了三项硬检查，
+任一不满足直接 `FlightError`，不会解锁：
+
+```yaml
+safety:
+  lio_max_delay: 0.30          # /Odometry 时间戳落后上限（秒）
+  lio_min_rate: 8.0            # 起飞前 2 s 采样到的 /Odometry 频率下限
+  preflight_lio_seconds: 2.0   # 采样时长
+  ekf_error_window: 30.0       # 检查最近多少秒的 EKF 告警
+  ekf_error_limit: 0           # 允许的 "odom time out of buffer" 条数
+```
+
+实现位置：`hybrid_mission.py` 的 `check_lio_realtime()`，在 `verify_estimator()` 之后、
+解析航点之前执行。判断逻辑：
+
+- 每个采样点用 `ROS 当前时间 − /Odometry.header.stamp` 计算延迟，超过 `lio_max_delay` 立即拒绝；
+- 用消息时间戳（不是接收时间）估算频率，低于 `lio_min_rate` 拒绝；
+- 订阅 `/rosout`，统计节点 `/ekf` 最近 `ekf_error_window` 秒内
+  `odom time out of buffer` / `ekf may be wrong` 的条数，超过 `ekf_error_limit` 拒绝。
+
+意义：它拦截的是"定位已经失效但消息还在发"的情况——正是这次事故前的状态。
+GCS 控制台的"实时监视"面板也会把同一延迟显示在话题表里。
