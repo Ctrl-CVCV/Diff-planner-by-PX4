@@ -180,8 +180,10 @@
 | `points` | [C, D] | 65 | 允许投放的航点 |
 | `label` | 危险品 | 66 | 标签子串匹配（YOLO 里叫"危险品标识"） |
 | `min_confidence` | 0.70 | 67 | 单帧最低置信度 |
-| `vote_frames` | 15 | 72 | 投票窗口帧数 |
-| `vote_ratio` | 0.60 | 73 | 窗口内命中比例阈值（15 帧至少 9 帧） |
+| `detection/vote_mode` | time | 77 | 投票方式：time=时间窗（与识别帧率解耦），frames=帧数窗 |
+| `detection/vote_window` | 0.5 s | 78 | 时间窗宽度；time 模式取窗口内命中比例 |
+| `detection/vote_frames` | 5 | 79 | frames 模式=窗口帧数；time 模式=窗口内最少票数 |
+| `detection/vote_ratio` | 0.60 | 80 | 窗口内命中比例阈值 |
 | `hover_seconds` | 3.0 s | 74 | 到点后稳定悬停多久才允许下降 |
 | `wait_timeout` | 10.0 s | 75 | 最多等检测多久；超时只告警并继续任务（C/D 的悬停因此可长于 3 s） |
 | `height` | 0.15 m | 76 | 下降到离地高度 |

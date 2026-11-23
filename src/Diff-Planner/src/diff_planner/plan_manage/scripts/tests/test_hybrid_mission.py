@@ -2,6 +2,7 @@
 """Offline mission tests: no ROS master, vehicles, or real publishers."""
 
 import copy
+from collections import deque
 import importlib.util
 import json
 import math
@@ -368,8 +369,16 @@ class RuntimeRules(unittest.TestCase):
             landed_state=1,
             header=SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: 1000.0)),
             pose=SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0, z=0.0))))
+        # LIO 实时性门禁需要时间戳随测试时钟前进且保持新鲜
+        telemetry.header = SimpleNamespace(stamp=SimpleNamespace(
+            to_sec=lambda: self.clock.now - 0.05))
+        runner.ros.Time.now.return_value = SimpleNamespace(to_sec=lambda: self.clock.now)
         runner.get = mock.Mock(return_value=telemetry)
         runner.safety['preflight_estimator_seconds'] = 0.0
+        runner.safety['preflight_lio_seconds'] = 0.0   # 其它预检用例只做一次延迟采样
+        # preflight() 用 source_config 重新解析，safety 也会被覆盖，两处都要改
+        runner.source_config['safety']['preflight_lio_seconds'] = 0.0
+        runner.ekf_error_times = deque()
         return params
 
     def test_preflight_ground_and_height_match(self):
@@ -432,13 +441,16 @@ class RuntimeRules(unittest.TestCase):
         with self.assertRaisesRegex(mission.FlightError, 'pass_radius'):
             self.runner.preflight()
 
-    def test_preflight_tolerates_stale_lio_stamp(self):
+    def test_preflight_rejects_stale_lio_stamp(self):
+        """2026-11-20 事故后改为硬门禁：LIO 时间戳落后超过阈值就拒绝起飞。"""
         self.prepare_preflight()
-        self.runner.safety['preflight_estimator_seconds'] = 0.5
-        self.runner.get.return_value.header = SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: 999.27))
+        self.runner.safety['preflight_estimator_seconds'] = 0.0
+        self.runner.get.return_value.header = SimpleNamespace(
+            stamp=SimpleNamespace(to_sec=lambda: self.clock.now - 0.73))
         with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic), \
                 mock.patch.object(mission.time, 'sleep', self.clock.sleep):
-            self.runner.preflight()
+            with self.assertRaisesRegex(mission.FlightError, 'LIO 不实时'):
+                self.runner.preflight()
         self.runner.publishers['land'].publish.assert_not_called()
 
     def test_preflight_rejects_diverged_ekf_before_takeoff(self):
@@ -1049,26 +1061,28 @@ class HazardDrop(unittest.TestCase):
         # 显式改配置关闭（等价于 --no-hazard-drop），而不是依赖出厂默认值。
         for config in (self.config, self.runner.config, self.runner.source_config):
             config['hazard_drop']['enabled'] = False
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, _ = self.simulate_full_mission(hazard='C')
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertNotIn('DROP_DESCEND', phases)
         self.assertNotIn('DROP_PUSH', phases)
-        runner.begin_push.assert_not_called()
+        runner.begin_services.assert_not_called()
         self.assertEqual(runner.stage, 'LANDING')
 
     def test_detection_at_c_descends_pushes_and_climbs_back(self):
         runner, clock = self.runner, self.clock
         self.enable_drop()
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, goals = self.simulate_full_mission(hazard='C')
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertIn('DROP_DESCEND', phases)
         self.assertIn('DROP_PUSH', phases)
         self.assertIn('DROP_ASCEND', phases, '投放后必须爬回航点高度再继续任务')
-        runner.begin_push.assert_called_once()
+        runner.begin_services.assert_called_once()
+        self.assertEqual(runner.begin_services.call_args[0][0], ['/servo3/push'],
+                         '危险品只调用 1 号物资的服务')
         # 下降目标 = 起飞原点 + hazard_drop/height，不压到地面以下。
         floor = runner.origin[2] + self.drop_config()['height']
         lowest = min(mission.vector(entry[2].position)[2] for entry in trace
@@ -1097,25 +1111,25 @@ class HazardDrop(unittest.TestCase):
     def test_detection_at_d_drops_from_direct_dwell(self):
         runner, clock = self.runner, self.clock
         self.enable_drop()
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, goals = self.simulate_full_mission(hazard='D')
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertIn('DWELL', phases)
         self.assertIn('DROP_DESCEND', phases, 'D 是直控段到点后的 DWELL，也必须支持投放')
-        runner.begin_push.assert_called_once()
+        runner.begin_services.assert_called_once()
         self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
         self.assertEqual(runner.stage, 'LANDING')
 
     def test_no_detection_waits_then_continues_without_dropping(self):
         runner, clock = self.runner, self.clock
         self.enable_drop()
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='2500 us'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, goals = self.simulate_full_mission()
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertNotIn('DROP_DESCEND', phases)
-        runner.begin_push.assert_not_called()
+        runner.begin_services.assert_not_called()
         self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'], '检测不到时必须继续整条任务')
         self.assertEqual(runner.stage, 'LANDING')
         # C 点按 wait_timeout 等满后继续，而不是立刻离开或永久悬停。
@@ -1154,27 +1168,84 @@ class HazardDrop(unittest.TestCase):
             runner.receive(SimpleNamespace(data='not json'), 'detections')
             self.assertFalse(self.last_vote(), '坏消息按未检测处理')
 
-            # 投票：帧数不足不确认；比例不足不确认；比例达标才确认。
+            # 时间窗投票：窗口内票数不足不确认；比例不足不确认；达标才确认。
+            self.assertEqual(values['vote_mode'], 'time', '默认应为时间窗投票')
             frames = values['vote_frames']
             runner.hazard_votes.clear()
             for _ in range(frames - 1):
                 self.feed([centered])
-            self.assertFalse(runner.hazard_stable(self.clock.now, values), '帧数不足还不能确认')
-            for _ in range(int(frames * (1.0 - values['vote_ratio'])) + 1):
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '窗口内票数不足还不能确认')
+            for _ in range(6):
+                self.clock.sleep(0.05)
                 self.feed([person])
             self.assertFalse(runner.hazard_stable(self.clock.now, values), '命中比例不足不能确认')
-            for _ in range(frames):
+            # 连续 12 帧中心目标（0.05s 一步）：0.5s 窗口内全部命中 → 确认。
+            for _ in range(12):
+                self.clock.sleep(0.05)
                 self.feed([centered])
             self.assertTrue(runner.hazard_stable(self.clock.now, values), '命中比例达标后确认')
+            # 旧命中滑出时间窗后再喂未命中：窗口内比例下降 → 不再确认。
+            for _ in range(12):
+                self.clock.sleep(0.05)
+                self.feed([person])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '窗口内全是未命中不能确认')
             # 检测断更（超过 max_age 没有新帧）→ 不能确认。
             self.assertFalse(runner.hazard_stable(self.clock.now + values['max_age'] * 2.0, values))
+
+    def test_top_and_bottom_quarter_detections_are_invalid(self):
+        """有效检测必须落在图像中间带：最上方/最下方 1/4 的目标不参与判定。"""
+        top = dict(label='危险品标识', confidence=0.95, cx=320.0, cy=40.0,
+                   x1=290.0, y1=10.0, x2=350.0, y2=70.0)
+        bottom = dict(label='危险品标识', confidence=0.95, cx=320.0, cy=440.0,
+                      x1=290.0, y1=410.0, x2=350.0, y2=470.0)
+        middle = dict(label='危险品标识', confidence=0.95, cx=320.0, cy=240.0,
+                      x1=290.0, y1=210.0, x2=350.0, y2=270.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.feed([top])
+            self.assertFalse(self.last_vote(), '图像上方 1/4 的目标不应触发')
+            self.feed([bottom])
+            self.assertFalse(self.last_vote(), '图像下方 1/4 的目标不应触发')
+            self.feed([middle])
+            self.assertTrue(self.last_vote(), '中间带的目标应正常参与判定')
+
+    def test_detection_band_ratios_are_configurable(self):
+        runner = self.runner
+        runner.config['detection'] = dict(exclude_top_ratio=0.4, exclude_bottom_ratio=0.1)
+        upper = dict(label='危险品标识', confidence=0.95, cx=320.0, cy=150.0,
+                     x1=290.0, y1=120.0, x2=350.0, y2=180.0)
+        middle = dict(label='危险品标识', confidence=0.95, cx=320.0, cy=250.0,
+                      x1=290.0, y1=220.0, x2=350.0, y2=280.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.feed([upper])
+            self.assertFalse(self.last_vote(), 'top_ratio=0.4 时 cy=150 应被排除')
+            self.feed([middle])
+            self.assertTrue(self.last_vote(), 'cy=250 仍在有效带内')
+
+    def test_frames_vote_mode_switch_in_yaml(self):
+        """detection/vote_mode=frames 时退回帧数窗投票，参数仍由 YAML 控制。"""
+        runner = self.runner
+        runner.config['detection']['vote_mode'] = 'frames'
+        runner.config['detection']['vote_frames'] = 3
+        values = runner.drop_settings()
+        self.assertEqual((values['vote_mode'], values['vote_frames']), ('frames', 3))
+        centered = dict(label='危险品标识', confidence=0.9, cx=320.0, cy=240.0,
+                        x1=290.0, y1=210.0, x2=350.0, y2=270.0)
+        runner.vote_buffer('hazard_drop').clear()
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            for _ in range(2):
+                self.feed([centered])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '帧数不足不能确认')
+            self.feed([centered])
+            self.assertTrue(runner.hazard_stable(self.clock.now, values), '3 帧全命中应确认')
 
     def test_once_drops_at_most_one_point(self):
         runner = self.runner
         self.enable_drop()
-        frames = runner.drop_settings()['vote_frames']
-        runner.hazard_votes = [(104.0, True)] * frames
-        runner.hazard_last = 104.9
+        values = runner.drop_settings()
+        samples = max(values['vote_frames'], 10)
+        # 时间窗模式下用最近 0.5s 内的票；帧数模式同样满足（最近 N 帧全命中）。
+        runner.hazard_votes = [(105.0 - 0.01 * index, True) for index in range(samples)]
+        runner.hazard_last = 104.99
         self.assertEqual(runner.drop_decision(105.0, 'C', 99.0), 'drop')
         runner.drop_done = True
         self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'continue',
@@ -1194,6 +1265,10 @@ class HazardDrop(unittest.TestCase):
         self.drop_config()['height'] = 0.15
         self.drop_config()['speed'] = self.config['direct']['max_speed'] + 0.1
         with self.assertRaisesRegex(mission.FlightError, 'speed'):
+            runner.drop_settings()
+        self.drop_config()['speed'] = 0.15
+        self.drop_config()['offset_body'] = [0.6, 0.0]
+        with self.assertRaisesRegex(mission.FlightError, '不能超过'):
             runner.drop_settings()
 
     def test_servo_push_reports_failure_without_raising(self):
@@ -1254,14 +1329,14 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
 
     def test_detection_at_e_descends_holds_and_climbs_without_push(self):
         runner = self.runner
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, goals = self.simulate_full_mission(rescue='E')
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertIn('DROP_DESCEND', phases)
         self.assertIn('DROP_PUSH', phases)
         self.assertIn('DROP_ASCEND', phases, '降高度后必须爬回航点高度再继续任务')
-        runner.begin_push.assert_not_called()
+        runner.begin_services.assert_not_called()
         floor = runner.origin[2] + self.rescue_config()['height']
         lowest = min(mission.vector(entry[2].position)[2] for entry in trace
                      if entry[1] in ('DROP_DESCEND', 'DROP_PUSH'))
@@ -1271,25 +1346,99 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
 
     def test_detection_at_two_points_triggers_both(self):
         runner = self.runner
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, _ = self.simulate_full_mission(rescue=('E', 'G'))
         self.run_mission()
         starts = [index for index, entry in enumerate(trace)
                   if entry[1] == 'DROP_DESCEND'
                   and (index == 0 or trace[index - 1][1] != 'DROP_DESCEND')]
         self.assertEqual(len(starts), 2, 'once=false 时 E、G 两点都应触发降高度')
-        runner.begin_push.assert_not_called()
+        runner.begin_services.assert_not_called()
 
     def test_no_detection_does_not_descend(self):
         runner = self.runner
-        runner.begin_push = mock.Mock(return_value=dict(ok=True, message='不应调用'))
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         state, trace, goals = self.simulate_full_mission()
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertNotIn('DROP_DESCEND', phases)
-        runner.begin_push.assert_not_called()
+        runner.begin_services.assert_not_called()
         self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
         self.assertEqual(runner.stage, 'LANDING')
+
+    def test_rescue_payloads_consumed_in_order(self):
+        runner = self.runner
+        runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
+        self.set_rescue(dry_run=False)
+        state, trace, goals = self.simulate_full_mission(rescue=('E', 'G'))
+        self.run_mission()
+        services = [call.args[0] for call in runner.begin_services.call_args_list]
+        self.assertEqual(services, [
+            ['/servo4/push'],                          # E 点：2 号物资
+            ['/servo1/push', '/servo2/push'],          # G 点：先下放 3/4 号
+            ['/servo3/push'],                          # G 点：投 3 号
+        ], '救援物资应按 2→（下放）→3 的顺序投放')
+        self.assertEqual(runner.rescue_index, 2, '投完 2、3 号后，下一个是 4 号')
+        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(runner.stage, 'LANDING')
+
+    def test_payload_offset_world_math(self):
+        self.assertAlmostEqual(mission.payload_offset_world(0.0, (0.075, 0.0))[0], 0.075)
+        x, y = mission.payload_offset_world(math.pi / 2, (0.075, 0.0))
+        self.assertAlmostEqual(x, 0.0, places=9)
+        self.assertAlmostEqual(y, 0.075, places=9)
+        x, y = mission.payload_offset_world(0.0, (0.0, 0.05))
+        self.assertAlmostEqual(x, 0.0, places=9)
+        self.assertAlmostEqual(y, 0.05, places=9)
+
+    def test_parse_offset_validation(self):
+        runner = self.runner
+        self.assertEqual(runner._parse_offset(None, 'x'), (0.0, 0.0))
+        with self.assertRaisesRegex(mission.FlightError, '两个有限数值'):
+            runner._parse_offset([0.1], 'x')
+        with self.assertRaisesRegex(mission.FlightError, '不能超过'):
+            runner._parse_offset([0.6, 0.0], 'x')
+
+    def test_drop_target_compensates_forward_offset(self):
+        runner = self.runner
+        for config in (self.config, runner.config, runner.source_config):
+            config['hazard_drop']['enabled'] = True
+        origin = (0.0, 0.0, 0.0)
+        resolved = mission.resolve_config(runner.source_config, origin)
+        runner.config, runner.origin = resolved, origin
+        point = resolved['points']['C']
+        motion = runner.start_drop(origin, 0.0, point, 100.0, 'C')
+        self.assertAlmostEqual(motion['target']['xyz'][0], point['xyz'][0] - 0.075, places=6,
+                               msg='1 号挂点在机头前方，机体要后移 7.5cm')
+        self.assertAlmostEqual(motion['target']['xyz'][1], point['xyz'][1], places=6)
+        # 航向 90° 时同样偏移应落在世界 y 上
+        motion = runner.start_drop(origin, math.pi / 2, point, 100.0, 'C')
+        self.assertAlmostEqual(motion['target']['xyz'][1], point['xyz'][1] - 0.075, places=6)
+
+    def test_rescue_payload2_compensates_rear_offset(self):
+        runner = self.runner
+        for config in (self.config, runner.config, runner.source_config):
+            config['rescue_drop']['enabled'] = True
+            config['hazard_drop']['enabled'] = False
+        origin = (0.0, 0.0, 0.0)
+        resolved = mission.resolve_config(runner.source_config, origin)
+        runner.config, runner.origin = resolved, origin
+        runner.rescue_index = 0
+        point = resolved['points']['E']
+        motion = runner.start_drop(origin, 0.0, point, 100.0, 'E')
+        self.assertAlmostEqual(motion['target']['xyz'][0], point['xyz'][0] + 0.075, places=6,
+                               msg='2 号挂点在机尾后方，机体要前移 7.5cm')
+
+    def test_parse_steps_validation(self):
+        runner = self.runner
+        with self.assertRaisesRegex(mission.FlightError, 'services'):
+            runner._parse_steps([dict(services=[], hold=1.0)], 'x')
+        with self.assertRaisesRegex(mission.FlightError, 'hold'):
+            runner._parse_steps([dict(services=['/a'], hold=0)], 'x')
+        with self.assertRaisesRegex(mission.FlightError, '开头'):
+            runner._parse_steps([dict(services=['a'], hold=1.0)], 'x')
+        self.assertEqual(runner._parse_steps([dict(services='/a', hold=1.5)], 'x'),
+                         [dict(services=['/a'], hold=1.5)])
 
     def test_rescue_settings_reject_other_points(self):
         self.rescue_config()['points'] = ['C']
@@ -1319,6 +1468,65 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'z_offset'):
             mission.point_z_offset(dict(z_offset=float('nan')))
         self.assertAlmostEqual(mission.point_z_offset(dict()), 0.0)
+
+
+class LioRealtimeGateTest(unittest.TestCase):
+    """起飞前实时性硬门禁：LIO 延迟/频率/EKF 超时告警。"""
+
+    setUp = RuntimeRules.setUp
+
+    def run_gate(self, stamp_fn, duration=0.5):
+        runner, clock = self.runner, self.clock
+        runner.ros.is_shutdown.return_value = False
+        runner.ros.Time.now.return_value = SimpleNamespace(to_sec=clock.monotonic)
+        runner.get = mock.Mock(side_effect=lambda key, *args: SimpleNamespace(
+            header=SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: stamp_fn(clock)))))
+        runner.ekf_error_times = deque()
+        runner.safety = dict(self.config['safety'])
+        runner.safety['preflight_lio_seconds'] = duration
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.check_lio_realtime()
+
+    def test_fresh_high_rate_passes(self):
+        self.run_gate(lambda clock: clock.now - 0.05)
+
+    def test_stale_timestamp_is_rejected(self):
+        with self.assertRaisesRegex(mission.FlightError, 'LIO 不实时'):
+            self.run_gate(lambda clock: clock.now - 0.5)
+
+    def test_low_rate_is_rejected(self):
+        def slow(clock):
+            return 100.0 + int((clock.now - 100.0) / 0.25) * 0.25
+        with self.assertRaisesRegex(mission.FlightError, '频率过低'):
+            self.run_gate(slow, duration=1.2)
+
+    def test_recent_ekf_buffer_errors_are_rejected(self):
+        runner, clock = self.runner, self.clock
+        runner.ros.is_shutdown.return_value = False
+        runner.ros.Time.now.return_value = SimpleNamespace(to_sec=clock.monotonic)
+        runner.get = mock.Mock(side_effect=lambda key, *args: SimpleNamespace(
+            header=SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: clock.now - 0.05))))
+        runner.ekf_error_times = deque([clock.now - 2.0])
+        runner.safety = dict(self.config['safety'])
+        runner.safety['preflight_lio_seconds'] = 0.2
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', clock.sleep):
+            with self.assertRaisesRegex(mission.FlightError, 'odom time out of buffer'):
+                runner.check_lio_realtime()
+
+    def test_old_ekf_errors_outside_window_are_ignored(self):
+        runner, clock = self.runner, self.clock
+        runner.ros.is_shutdown.return_value = False
+        runner.ros.Time.now.return_value = SimpleNamespace(to_sec=clock.monotonic)
+        runner.get = mock.Mock(side_effect=lambda key, *args: SimpleNamespace(
+            header=SimpleNamespace(stamp=SimpleNamespace(to_sec=lambda: clock.now - 0.05))))
+        runner.ekf_error_times = deque([clock.now - 60.0])
+        runner.safety = dict(self.config['safety'])
+        runner.safety['preflight_lio_seconds'] = 0.2
+        with mock.patch.object(mission.time, 'monotonic', clock.monotonic), \
+                mock.patch.object(mission.time, 'sleep', clock.sleep):
+            runner.check_lio_realtime()
 
 
 if __name__ == '__main__':

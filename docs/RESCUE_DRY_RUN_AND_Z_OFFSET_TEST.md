@@ -23,8 +23,7 @@ rescue_drop:
   points: [E, F, G]
   label: 救助人员
   min_confidence: 0.70
-  vote_frames: 15
-  vote_ratio: 0.60
+  # 投票参数默认取 detection 段：vote_mode/vote_window/vote_frames/vote_ratio
   hover_seconds: 3.0
   wait_timeout: 10.0
   height: 0.15         # 离该点地面的高度
@@ -268,7 +267,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | 临时关闭救援测试 | 命令行加 `--no-rescue-drop` | 不订阅检测、不降高度 |
 | 正式投放（以后） | `rescue_drop/dry_run: false` | 测试通过后再改 |
 | 哪些点允许触发 | `rescue_drop/points` | 只允许 E/F/G |
-| 检测灵敏度 | `min_confidence` / `vote_ratio` / `vote_frames` | 误检多就提高门槛 |
+| 检测灵敏度 | `min_confidence` / `detection/vote_*` | 误检多就提高门槛或投票比例 |
 | 检测等待时间 | `rescue_drop/wait_timeout` | 默认 10 s，到点后等这么久 |
 | 下降高度 | `rescue_drop/height` | 相对该点地面 |
 | 下降速度 | `rescue_drop/speed` | 不得大于 `direct/max_speed`（0.20） |

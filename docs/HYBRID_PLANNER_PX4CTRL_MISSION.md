@@ -570,7 +570,8 @@ rescue_drop:
 
 `rescue_drop/enabled: true`、`rescue_drop/dry_run: true`（临时关闭用 `--no-rescue-drop`）。
 默认在 **E、F、G** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
-最近 `vote_frames` 帧投票 + `max_age`）。`once: false`：三个点各自独立判断。
+`detection` 段投票窗口（默认 time/0.5s，可设 frames 帧数窗）+ `max_age`）。
+`once: false`：三个点各自独立判断。
 
 当前阶段的 `dry_run: true` 只降到离地 `height`、保持 `push_wait`、再爬回，不调用舵机；
 日志会写明"测试模式（dry_run）"。测试通过后把 `dry_run` 改成 `false` 即按第 11 节的

@@ -10,17 +10,19 @@ H is a pass-through waypoint: the next goal is sent as soon as the vehicle enter
 mission/pass_radius around it, without a dwell, while the script keeps tracking the
 previous direct reference instead of freezing at the waypoint.
 
-危险品投放（hazard_drop/enabled，2026-10-31 起实机配置默认开启，可用 --no-hazard-drop 关）：
-在 hazard_drop/points（默认 C、D）连续稳定悬停 hover_seconds 秒、且最近 vote_frames 帧里
-"离图像中心最近的目标是 label 且置信度达标"的比例达到 vote_ratio 时，先在位置控制下降到
-离地 height，调用 hazard_drop/service（默认 /servo/push）推出舵机（px4_servo 用 hold_s=0，
-推出后不自动收回），保持 push_wait 秒后爬回该航点高度继续任务。到点后最多等 wait_timeout 秒，
-超时只告警并继续，不中止飞行。启用时预检要求舵机服务可用。
+物资投放（四路 PWM_MAIN 舵机，服务 /servo1../servo4）：
+1 号消防物资用 /servo3/push；2 号用 /servo4/push；3/4 号先 /servo1/push + /servo2/push
+打到 1143 下放到底层，再分别 /servo3/push、/servo4/push。动作列表写在配置的
+hazard_drop/steps 与 rescue_drop/payloads 里，每一步是 {services: [...], hold: 秒}，
+舵机节点 hold_s=2s 自动回位。
 
-救援物资投放测试（rescue_drop/enabled，默认开启但 dry_run=true，可用 --no-rescue-drop 关）：
-在 rescue_drop/points（默认 E、F、G）检测到 label（默认"救助人员"）后下降到离地 height。
-dry_run=true 时只降高度、保持 push_wait 秒再爬回，**不调用舵机、不投放**；这是当前阶段的
-识别+降高度测试。rescue_drop/once 默认 false：E、F、G 各自独立判断，允许多点触发。
+危险品投放（hazard_drop/enabled，默认开启，可用 --no-hazard-drop 关）：在 C/D 稳定悬停
+hover_seconds 秒且投票确认"危险品"后，降到离地 height，执行 hazard_drop/steps，
+再爬回该航点高度。到点后最多等 wait_timeout 秒，超时只告警并继续。
+
+救援物资（rescue_drop/enabled，默认开启但 dry_run=true，可用 --no-rescue-drop 关）：
+E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
+用完即止。dry_run=true 时只降高度、不调用舵机，用于当前测试阶段。
 
 航点地面高度误差（points/<航点>/z_offset，单位米，默认 0）：实际地面不平，各点相对起飞
 原点的地面高度差可直接填在这里，任务脚本会把该偏移加到该点所有高度目标上（含投放/进近
@@ -75,6 +77,35 @@ def hover_point(config):
 
 
 MAX_Z_OFFSET = 0.30
+MAX_DROP_OFFSET = 0.50
+_VOTE_HISTORY_LIMIT = 512  # time 模式投票队列硬上限，防止异常帧率下无限增长
+
+
+def vote_raw_config(config, section):
+    """读取某投放段的投票参数（段内键优先，其次 detection 公共配置）。"""
+    settings = config.get(section) or {}
+    detect = config.get('detection') or {}
+
+    def pick(name, fallback):
+        if name in settings:
+            return settings[name]
+        return detect.get(name, fallback)
+
+    return (pick('vote_mode', 'frames'), pick('vote_window', 0.5),
+            pick('vote_frames', 15), pick('vote_ratio', 0.60))
+
+
+def vote_text(mode, window, frames, ratio):
+    if mode == 'time':
+        return '最近 %.1fs 内至少 %d 票、命中比例 ≥%.0f%%' % (window, frames, ratio * 100.0)
+    return '最近 %d 帧里命中比例 ≥%.0f%%' % (frames, ratio * 100.0)
+
+
+def payload_offset_world(yaw, offset_body):
+    """物资挂点在机体坐标 [前, 左]（米）→ 世界系的水平偏移。"""
+    forward, left = float(offset_body[0]), float(offset_body[1])
+    return (math.cos(yaw) * forward - math.sin(yaw) * left,
+            math.sin(yaw) * forward + math.cos(yaw) * left)
 
 
 def point_z_offset(point):
@@ -187,6 +218,7 @@ class Mission:
         from mavros_msgs.msg import ExtendedState, RCIn, State
         from nav_msgs.msg import Odometry
         from quadrotor_msgs.msg import PositionCommand, Px4ctrlState, TakeoffLand
+        from rosgraph_msgs.msg import Log
         from std_msgs.msg import Empty, String
 
         self.ros, self.config = ros, config
@@ -218,6 +250,11 @@ class Mission:
         self.subscribers = [ros.Subscriber(config['topics'][key], message_type, self.receive,
                                            callback_args=key, queue_size=1, tcp_nodelay=True)
                             for key, message_type in message_types.items()]
+        # EKF 的 "odom time out of buffer / ekf may be wrong" 只出现在 /rosout 里；
+        # 起飞前门禁要看最近一段时间有没有这类报错。
+        self.ekf_error_times = deque()
+        self.log_subscriber = ros.Subscriber('/rosout', Log, self.receive_log, queue_size=50,
+                                             tcp_nodelay=True)
         # 最近若干帧的检测投票：(到达时刻, 该帧是否命中)。是否确认目标由投票决定。
         self.hazard_votes = deque()
         self.hazard_last = None
@@ -225,6 +262,7 @@ class Mission:
         self.rescue_last = None
         self.drop_done = False
         self.rescue_done = set()
+        self.rescue_index = 0    # 下一个要投放的救援物资序号（对应 rescue_drop/payloads）
 
     def receive(self, message, key):
         now = time.monotonic()
@@ -232,6 +270,24 @@ class Mission:
             self.data[key] = (message, now)
             if key == 'detections':
                 self.record_detections(message)
+
+    def receive_log(self, message):
+        """记录 EKF 的里程计超时告警，供起飞前门禁判断。"""
+        try:
+            if str(message.name) != '/ekf' or int(message.level) < 8:
+                return
+            text = str(message.msg or '')
+            if 'out of buffer' not in text and 'ekf may be wrong' not in text:
+                return
+            with self.lock:
+                times = getattr(self, 'ekf_error_times', None)
+                if times is None:
+                    times = self.ekf_error_times = deque()
+                times.append(time.monotonic())
+                while len(times) > 200:
+                    times.popleft()
+        except Exception:
+            pass
 
     def get(self, key, timeout, stamped=False):
         with self.lock:
@@ -379,6 +435,64 @@ class Mission:
                                   '先排查建图与 EKF，不要强行起飞' % (divergence, limit))
             time.sleep(0.05)
 
+    def check_lio_realtime(self):
+        """起飞前实时性硬门禁：/Odometry 时间戳延迟、频率，以及最近 EKF 超时告警。
+
+        这三项任一不满足就直接拒绝起飞。事故 2026-11-20：faster-lio 积压 10–15 s，
+        EKF 报 odom time out of buffer，任务仍然起飞，最终高度估计错误导致冲顶。
+        """
+        safety = self.safety
+
+        def number(name, default):
+            value = safety.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise FlightError('safety/%s 必须是有限数值' % name)
+            return float(value)
+
+        max_delay = number('lio_max_delay', 0.30)
+        min_rate = number('lio_min_rate', 8.0)
+        duration = number('preflight_lio_seconds', 2.0)
+        window = number('ekf_error_window', 30.0)
+        limit = int(number('ekf_error_limit', 0))
+        def sample():
+            if self.ros.is_shutdown():
+                raise FlightError('ROS 已关闭，LIO 实时性检查未完成')
+            message = self.get('lio', safety['lio_timeout'])
+            now = self.ros.Time.now().to_sec()
+            delay = now - message.header.stamp.to_sec()
+            if not math.isfinite(delay):
+                raise FlightError('LIO 时间戳无效，拒绝起飞')
+            if delay > max_delay:
+                raise FlightError('LIO 不实时：/Odometry 时间戳落后 %.2fs（阈值 %.2fs）；'
+                                  '常见原因是 faster-lio 处理积压。先降低负载或调大滤波参数，'
+                                  '重启定位链后再预检' % (delay, max_delay))
+            return message.header.stamp.to_sec()
+
+        if duration <= 0:
+            stamps = [sample()]
+        else:
+            started = time.monotonic()
+            stamps = []
+            while time.monotonic() - started < duration:
+                stamp = sample()
+                if not stamps or abs(stamp - stamps[-1]) > 1e-6:
+                    stamps.append(stamp)
+                time.sleep(0.05)
+            if len(stamps) < 3:
+                raise FlightError('LIO 消息不足（%.1fs 内仅 %d 帧），无法确认实时性，拒绝起飞'
+                                  % (duration, len(stamps)))
+            span = stamps[-1] - stamps[0]
+            rate = (len(stamps) - 1) / span if span > 1e-6 else 0.0
+            if rate < min_rate:
+                raise FlightError('LIO 频率过低：实测 %.1f Hz（阈值 %.1f Hz），拒绝起飞'
+                                  % (rate, min_rate))
+        times = getattr(self, 'ekf_error_times', None) or ()
+        recent = [stamp for stamp in times if time.monotonic() - stamp <= window]
+        if len(recent) > limit:
+            raise FlightError('最近 %.0fs 内 EKF 报告 %d 次 "odom time out of buffer / ekf may be wrong"'
+                              '（上限 %d）；EKF 估计不可信，拒绝起飞'
+                              % (window, len(recent), limit))
+
     def landing_settings(self):
         """降落参数：发 LAND 前的落点参考判据 + 可选的低空进近。
 
@@ -421,6 +535,42 @@ class Mission:
             raise FlightError('landing/approach_speed 不能大于 direct/max_speed')
         return values
 
+    def _parse_steps(self, raw, where):
+        """解析投放步骤：[{services: [...], hold: 秒}, ...]。同一步骤里的服务依次调用。"""
+        if not isinstance(raw, (list, tuple)) or not raw:
+            raise FlightError(where + ' 必须是非空步骤列表')
+        steps = []
+        for index, step in enumerate(raw):
+            if not isinstance(step, dict):
+                raise FlightError('%s[%d] 必须是 {services: [...], hold: 秒}' % (where, index))
+            services = step.get('services')
+            if isinstance(services, str):
+                services = [services]
+            if not isinstance(services, (list, tuple)) or not services:
+                raise FlightError('%s[%d]/services 必须是非空服务名列表' % (where, index))
+            services = [str(service) for service in services]
+            for service in services:
+                if not service.startswith('/'):
+                    raise FlightError('%s[%d]/services 必须以 / 开头：%s' % (where, index, service))
+            hold = step.get('hold', 2.5)
+            if (isinstance(hold, bool) or not isinstance(hold, (int, float))
+                    or not math.isfinite(hold) or hold <= 0):
+                raise FlightError('%s[%d]/hold 必须是正数' % (where, index))
+            steps.append(dict(services=services, hold=float(hold)))
+        return steps
+
+    def _parse_offset(self, raw, where):
+        """解析物资挂点相对机体中心的偏移 [前, 左]（米），默认 [0, 0]。"""
+        if raw is None:
+            return (0.0, 0.0)
+        if (not isinstance(raw, (list, tuple)) or len(raw) != 2
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value) for value in raw)):
+            raise FlightError(where + ' 必须是两个有限数值 [前, 左]（米）')
+        if any(abs(value) > MAX_DROP_OFFSET for value in raw):
+            raise FlightError('%s 每个分量绝对值不能超过 %.2fm' % (where, MAX_DROP_OFFSET))
+        return (float(raw[0]), float(raw[1]))
+
     def payload_settings(self, section, allowed_points, once_default):
         """投放参数解析与校验：hazard_drop（危险品）与 rescue_drop（救援物资）共用。
 
@@ -439,12 +589,44 @@ class Mission:
         if unknown:
             raise FlightError('%s/points 只允许 %s，当前含 %s'
                               % (section, '/'.join(allowed_points), '/'.join(unknown)))
+        legacy_service = settings.get('service', '/servo/push')
+        raw_steps = settings.get('steps')
+        if raw_steps is None:
+            raw_steps = [dict(services=[legacy_service], hold=settings.get('push_wait', 2.5))]
+        steps = self._parse_steps(raw_steps, section + '/steps')
+        offset_body = self._parse_offset(settings.get('offset_body'), section + '/offset_body')
+        raw_payloads = settings.get('payloads')
+        if raw_payloads is None:
+            payloads = [dict(steps=steps, offset_body=offset_body)]
+        else:
+            if not isinstance(raw_payloads, (list, tuple)) or not raw_payloads:
+                raise FlightError(section + '/payloads 必须是非空列表')
+            payloads = []
+            for index, payload in enumerate(raw_payloads):
+                if not isinstance(payload, dict):
+                    raise FlightError('%s/payloads[%d] 必须是 {steps: [...]}' % (section, index))
+                payloads.append(dict(
+                    steps=self._parse_steps(
+                        payload.get('steps'), '%s/payloads[%d]/steps' % (section, index)),
+                    offset_body=self._parse_offset(
+                        payload.get('offset_body', settings.get('offset_body')),
+                        '%s/payloads[%d]/offset_body' % (section, index))))
+        detection = self.config.get('detection') or {}
+
+        def vote_setting(name, fallback):
+            # 投放段内同名键优先；其次 detection 公共投票配置；最后内置默认。
+            if name in settings:
+                return settings[name]
+            return detection.get(name, fallback)
+
         values = dict(enabled=settings.get('enabled', False),
                       points=tuple(points),
                       label=label.strip(),
                       min_confidence=settings.get('min_confidence', 0.70),
-                      vote_frames=settings.get('vote_frames', 15),
-                      vote_ratio=settings.get('vote_ratio', 0.60),
+                      vote_mode=vote_setting('vote_mode', 'frames'),
+                      vote_window=vote_setting('vote_window', 0.5),
+                      vote_frames=vote_setting('vote_frames', 15),
+                      vote_ratio=vote_setting('vote_ratio', 0.60),
                       hover_seconds=settings.get('hover_seconds', 3.0),
                       wait_timeout=settings.get('wait_timeout', 10.0),
                       height=settings.get('height', 0.15),
@@ -455,13 +637,17 @@ class Mission:
                       max_age=settings.get('max_age', 0.5),
                       once=settings.get('once', once_default),
                       dry_run=settings.get('dry_run', False),
-                      service=settings.get('service', '/servo/push'))
+                      service=legacy_service,
+                      steps=steps,
+                      payloads=payloads,
+                      offset_body=offset_body)
         if (not isinstance(values['enabled'], bool) or not isinstance(values['once'], bool)
                 or not isinstance(values['dry_run'], bool)):
             raise FlightError(section + '/enabled、once、dry_run 必须是 true/false')
         if not isinstance(values['service'], str) or not values['service'].startswith('/'):
             raise FlightError(section + '/service 必须是以 / 开头的服务名')
-        for name in ('min_confidence', 'vote_frames', 'vote_ratio', 'hover_seconds', 'wait_timeout',
+        for name in ('min_confidence', 'vote_frames', 'vote_ratio', 'vote_window',
+                     'hover_seconds', 'wait_timeout',
                      'height', 'speed', 'tolerance', 'timeout', 'push_wait', 'max_age'):
             value = values[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -475,11 +661,13 @@ class Mission:
             raise FlightError(section + '/min_confidence 必须位于 (0, 1]')
         if not 0.0 < values['vote_ratio'] <= 1.0:
             raise FlightError(section + '/vote_ratio 必须位于 (0, 1]')
+        if not isinstance(values['vote_mode'], str) or values['vote_mode'] not in ('time', 'frames'):
+            raise FlightError('%s/vote_mode 必须是 time（时间窗）或 frames（帧数窗）' % section)
         if values['height'] <= 0 or values['height'] >= self.config['takeoff']['height']:
             raise FlightError(section + '/height 必须大于 0 且小于 takeoff/height')
         if values['speed'] > self.config['direct']['max_speed']:
             raise FlightError(section + '/speed 不能大于 direct/max_speed')
-        for name in ('hover_seconds', 'wait_timeout', 'tolerance',
+        for name in ('vote_window', 'hover_seconds', 'wait_timeout', 'tolerance',
                      'timeout', 'push_wait', 'max_age'):
             if values[name] <= 0:
                 raise FlightError('%s/%s 必须为正数' % (section, name))
@@ -544,12 +732,40 @@ class Mission:
             width = height = 0.0
         located = [item for item in candidates if item[0] is not None]
         if located and width > 0.0 and height > 0.0:
+            # 只接受中心落在图像"中间带"的目标：排除最上方/最下方各一段
+            # （默认各 1/4）。相机前下方"前面一个格子"的目标常落在边缘，
+            # 不参与判定，避免悬停点上空误判。
+            top_ratio, bottom_ratio = self.detection_band()
+            upper = height * top_ratio
+            lower = height * (1.0 - bottom_ratio)
+            located = [item for item in located if upper <= item[0][1] <= lower]
+            if not located:
+                return False
             cx, cy = width / 2.0, height / 2.0
             _, text, confidence = min(
                 located, key=lambda item: math.hypot(item[0][0] - cx, item[0][1] - cy))
             return label in text and confidence >= threshold
         return any(label in text and confidence >= threshold
                    for _, text, confidence in candidates)
+
+    def detection_band(self):
+        """有效检测的纵向区域：排除图像最上方/最下方各一段。
+
+        返回 (top_ratio, bottom_ratio)，默认各 0.25，即只接受 cy 位于
+        [0.25H, 0.75H] 的目标。配置非法时按默认值处理，单项限制在 0..0.45，
+        避免把有效区域压成空带。
+        """
+        settings = self.config.get('detection') or {}
+        try:
+            top = float(settings.get('exclude_top_ratio', 0.25))
+            bottom = float(settings.get('exclude_bottom_ratio', 0.25))
+        except (TypeError, ValueError):
+            top = bottom = 0.25
+        if not math.isfinite(top):
+            top = 0.25
+        if not math.isfinite(bottom):
+            bottom = 0.25
+        return min(max(top, 0.0), 0.45), min(max(bottom, 0.0), 0.45)
 
     def hazard_frame(self, message):
         """兼容旧接口：只按 hazard_drop 的类别/阈值判定单帧。"""
@@ -568,13 +784,29 @@ class Mission:
             setattr(self, votes_attr, votes)
         return votes
 
-    def vote_limit(self):
-        """保留多少帧参与投票；坏配置按默认值处理，不让回调线程抛异常。"""
-        settings = self.config.get('hazard_drop') or {}
+    def vote_params(self, section):
+        """该投放段的投票参数（time=时间窗 / frames=帧数窗）；坏配置按默认值处理。"""
+        mode, window, frames, ratio = vote_raw_config(self.config, section)
         try:
-            return max(1, int(settings.get('vote_frames', 15)))
+            mode = str(mode)
+            window = float(window)
+            frames = max(1, int(frames))
+            ratio = float(ratio)
         except (TypeError, ValueError):
-            return 15
+            return dict(vote_mode='frames', vote_window=0.5, vote_frames=15, vote_ratio=0.60)
+        if mode not in ('time', 'frames'):
+            mode = 'frames'
+        if not math.isfinite(window) or window <= 0.0:
+            window = 0.5
+        if not 0.0 < ratio <= 1.0:
+            ratio = 0.60
+        return dict(vote_mode=mode, vote_window=window, vote_frames=frames, vote_ratio=ratio)
+
+    @staticmethod
+    def vote_window_text(values):
+        """日志用：当前投票窗口描述。"""
+        return vote_text(values.get('vote_mode', 'frames'), values.get('vote_window', 0.5),
+                         values.get('vote_frames', 15), values.get('vote_ratio', 0.60))
 
     def record_detections(self, message):
         """把一帧检测结果计入每个已启用投放计划的投票；禁用计划完全不参与。"""
@@ -586,18 +818,31 @@ class Mission:
             votes = self.vote_buffer(section)
             votes.append((now, self.frame_hit(
                 message, settings, '危险品' if section == 'hazard_drop' else '救助人员')))
-            try:
-                limit = max(1, int(settings.get('vote_frames', 15)))
-            except (TypeError, ValueError):
-                limit = 15
-            while len(votes) > limit:
-                del votes[0]
+            params = self.vote_params(section)
+            if params['vote_mode'] == 'time':
+                cutoff = now - params['vote_window']
+                while votes and votes[0][0] < cutoff:
+                    del votes[0]
+                while len(votes) > _VOTE_HISTORY_LIMIT:
+                    del votes[0]
+            else:
+                while len(votes) > params['vote_frames']:
+                    del votes[0]
             setattr(self, self.vote_attrs(section)[1], now)
 
     def votes_stable(self, votes, last, now, values):
-        """最近 vote_frames 帧里命中比例达到 vote_ratio，且最近一帧未过期。"""
+        """投票窗口内命中比例达到 vote_ratio，且最近一帧未过期。
+
+        time 模式取最近 vote_window 秒内的样本（至少 vote_frames 票）；
+        frames 模式取最近 vote_frames 帧。
+        """
         votes = votes or ()
-        if last is None or now - last > values['max_age'] or len(votes) < values['vote_frames']:
+        if last is None or now - last > values['max_age']:
+            return False
+        if values.get('vote_mode', 'frames') == 'time':
+            cutoff = now - values['vote_window']
+            votes = [item for item in votes if item[0] >= cutoff]
+        if len(votes) < values['vote_frames']:
             return False
         hits = sum(1 for _, hit in votes if hit)
         return hits >= values['vote_ratio'] * len(votes)
@@ -646,6 +891,8 @@ class Mission:
         section, values = plan
         if values['once'] and self.plan_done(section, point):
             return 'continue'
+        if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
+            return 'continue'
         if now - settled_since < values['hover_seconds']:
             return 'wait'
         if self.plan_votes_stable(section, now, values):
@@ -653,11 +900,10 @@ class Mission:
         if now - settled_since >= values['wait_timeout']:
             votes = self.vote_buffer(section)
             hits = sum(1 for _, hit in votes if hit)
-            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：最近 %d 帧命中 %d 帧'
-                             '（需要 %d 帧里命中 ≥%.0f%%、置信度 ≥%.2f），不投放，继续任务',
+            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：投票队列 %d 票中命中 %d 票'
+                             '（需要 %s、置信度 ≥%.2f），不投放，继续任务',
                              point, now - settled_since, values['label'], len(votes), hits,
-                             values['vote_frames'], values['vote_ratio'] * 100.0,
-                             values['min_confidence'])
+                             self.vote_window_text(values), values['min_confidence'])
             return 'continue'
         return 'wait'
 
@@ -675,20 +921,44 @@ class Mission:
         if plan is None:
             raise FlightError('%s 没有可用的投放计划' % label, True)
         section, values = plan
+        steps = values['steps']
+        payload_index = None
+        payload_note = ''
+        offset_body = values['offset_body']
+        if section == 'rescue_drop':
+            payload_index = getattr(self, 'rescue_index', 0)
+            if payload_index >= len(values['payloads']):
+                raise FlightError('救援物资已全部投放，没有可执行的动作', True)
+            steps = values['payloads'][payload_index]['steps']
+            offset_body = values['payloads'][payload_index]['offset_body']
+            payload_note = '（救援 %d 号物资）' % (payload_index + 2)
         limits = dict(self.config['direct'])
         limits['max_speed'] = min(limits['max_speed'], values['speed'])
         low_z = self.origin[2] + point_z_offset(point) + values['height']
-        low = dict(xyz=[point['xyz'][0], point['xyz'][1], low_z], yaw_deg=math.degrees(yaw))
+        # 挂点相对机体中心有前后偏移：要让挂点对准航点，机体要反向平移同样距离。
+        shift_x, shift_y = payload_offset_world(yaw, offset_body)
+        low = dict(xyz=[point['xyz'][0] - shift_x, point['xyz'][1] - shift_y, low_z],
+                   yaw_deg=math.degrees(yaw))
         duration = direct_duration(position, yaw, low, limits)
         self.status('DROP_DESCEND')
-        self.ros.loginfo('已稳定检测到"%s"（%s），下降到离地 %.2fm（world z=%.2f，地面误差 %+.2fm），'
-                         '参考时长 %.1fs；%s', values['label'], section, values['height'], low_z,
-                         point_z_offset(point), duration,
-                         '测试模式：到位后不调用舵机、不投放' if values['dry_run']
-                         else '到位后调用 %s 投放' % values['service'])
+        if values['dry_run']:
+            action_note = '测试模式：到位后只保持、不调用舵机'
+        else:
+            action_note = '到位后执行：' + '；'.join(
+                '第%d步 %s（保持 %.1fs）' % (index + 1, '+'.join(step['services']), step['hold'])
+                for index, step in enumerate(steps))
+        compensation = ''
+        if abs(offset_body[0]) > 1e-6 or abs(offset_body[1]) > 1e-6:
+            compensation = '；投放挂点偏移 [前 %+.3fm, 左 %+.3fm]，机体目标修正 (%+.3f, %+.3f) m' % (
+                offset_body[0], offset_body[1], -shift_x, -shift_y)
+        self.ros.loginfo('已稳定检测到"%s"（%s）%s，下降到离地 %.2fm（world z=%.2f，地面误差 %+.2fm），'
+                         '参考时长 %.1fs；%s%s', values['label'], section, payload_note,
+                         values['height'], low_z, point_z_offset(point), duration, action_note,
+                         compensation)
         return dict(started=now, start=tuple(position), yaw=yaw, target=low, duration=duration,
                     watchdog=MotionWatchdog(now, position), push_time=None, push_ok=None,
-                    plan_name=section, plan=values)
+                    steps=steps, step_index=None, step_time=None, payload_index=payload_index,
+                    payload_consumed=False, plan_name=section, plan=values)
 
     def start_ascent(self, position, motion, point, now):
         """投放/降高度测试后爬回原航点高度，航向保持不变；到位后回到正常任务流。"""
@@ -704,7 +974,8 @@ class Mission:
         return dict(started=now, start=tuple(position), yaw=motion['yaw'], target=goal, duration=duration,
                     watchdog=MotionWatchdog(now, position), push_time=None,
                     push_ok=motion.get('push_ok'), plan_name=motion.get('plan_name'),
-                    plan=motion.get('plan'))
+                    plan=motion.get('plan'), steps=motion.get('steps'),
+                    step_index=motion.get('step_index'), payload_index=motion.get('payload_index'))
 
     def servo_push(self, service=None):
         """同步调用投放服务（默认 /servo/push，std_srvs/Trigger），返回 (成功, 说明)。
@@ -741,6 +1012,38 @@ class Mission:
 
         threading.Thread(target=call, daemon=True, name='servo_push').start()
         return outcome
+
+    def begin_services(self, services):
+        """后台依次调用同一投放步骤里的多个服务（例如同时下放 3/4 号物资的两路舵机）。"""
+        outcome = dict(ok=None, results=[])
+
+        def call():
+            results = []
+            for service in services:
+                ok, message = self.servo_push(service)
+                results.append(dict(service=service, ok=ok, message=message))
+                if ok:
+                    self.ros.logwarn('舵机动作成功（%s）：%s', service, message)
+                else:
+                    self.ros.logerr('舵机动作失败（%s）：%s；载荷可能未投放', service, message)
+            outcome.update(ok=all(item['ok'] for item in results), results=results)
+
+        threading.Thread(target=call, daemon=True, name='servo_steps').start()
+        return outcome
+
+    def start_step(self, motion, index, now):
+        """执行投放动作的第 index 步：并发调用该步服务，并记录保持时间。"""
+        step = motion['steps'][index]
+        motion['step_index'] = index
+        motion['step_time'] = now
+        motion['step_hold'] = step['hold']
+        motion['push_time'] = now
+        motion['push_ok'] = self.begin_services(step['services'])
+        if motion.get('plan_name') == 'rescue_drop' and not motion.get('payload_consumed'):
+            motion['payload_consumed'] = True
+            self.rescue_index = getattr(self, 'rescue_index', 0) + 1
+        self.ros.loginfo('执行投放第 %d/%d 步：%s（保持 %.1fs）',
+                         index + 1, len(motion['steps']), '+'.join(step['services']), step['hold'])
 
     def start_approach(self, position, yaw, goal, ground_offset=0.0):
         """从终点悬停高度平滑降到离地 approach_height，水平方向顺带收掉残留到点误差。"""
@@ -786,6 +1089,7 @@ class Mission:
         if self.get('extended', self.safety['fcu_timeout']).landed_state != 1:
             raise FlightError('起飞前 PX4 必须报告 ON_GROUND(1)')
         self.verify_estimator()
+        self.check_lio_realtime()
         resolved = resolve_config(self.source_config, position)
         limit = self.safety.get('max_distance_from_origin', 0.0)
         if limit:
@@ -812,13 +1116,21 @@ class Mission:
             values = self.drop_settings() if section == 'hazard_drop' else self.rescue_settings()
             if not values['enabled']:
                 continue
+            services = []
+            for step in values['steps']:
+                services.extend(step['services'])
+            for payload in values['payloads']:
+                for step in payload['steps']:
+                    services.extend(step['services'])
+            services = sorted(set(services))
             if not values['dry_run']:
                 # 服务缺失时宁可在地面报错，也不要飞完一圈才发现投放根本没发生。
-                try:
-                    self.ros.wait_for_service(values['service'], timeout=2.0)
-                except Exception as error:
-                    raise FlightError('%s 已启用但投放服务 %s 不可用（%s）；先启动 px4_servo'
-                                      % (section, values['service'], error)) from error
+                for service in services:
+                    try:
+                        self.ros.wait_for_service(service, timeout=2.0)
+                    except Exception as error:
+                        raise FlightError('%s 已启用但投放服务 %s 不可用（%s）；先启动 px4_servo'
+                                          % (section, service, error)) from error
             with self.lock:
                 seen = self.data.get('detections')
             if seen is None:
@@ -827,19 +1139,20 @@ class Mission:
                                  section, self.config['topics']['detections'], values['wait_timeout'])
             if values['dry_run']:
                 self.ros.logwarn('%s 已启用（测试模式 dry_run=true）：%s 中先连续稳定悬停 %.1fs，'
-                                 '且最近 %d 帧里命中中心最近目标的比例 ≥%.0f%%（单帧置信度 ≥ %.2f）后，'
+                                 '且%s（单帧置信度 ≥ %.2f）后，'
                                  '降到离地 %.2fm 并保持 %.1fs，然后爬回；不调用 %s、不投放',
                                  section, '/'.join(values['points']), values['hover_seconds'],
-                                 values['vote_frames'], values['vote_ratio'] * 100.0,
+                                 self.vote_window_text(values),
                                  values['min_confidence'], values['height'], values['push_wait'],
-                                 values['service'])
+                                 '、'.join(services) or '舵机')
             else:
-                self.ros.logwarn('%s 已启用：%s 中先连续稳定悬停 %.1fs，且最近 %d 帧里'
-                                 '命中中心最近目标的比例 ≥%.0f%%（单帧置信度 ≥ %.2f）后，'
-                                 '降到离地 %.2fm 调用 %s，再爬回该点高度继续任务',
+                self.ros.logwarn('%s 已启用：%s 中先连续稳定悬停 %.1fs，且%s'
+                                 '（单帧置信度 ≥ %.2f）后，'
+                                 '降到离地 %.2fm 依次调用 %s，再爬回该点高度继续任务',
                                  section, '/'.join(values['points']), values['hover_seconds'],
-                                 values['vote_frames'], values['vote_ratio'] * 100.0,
-                                 values['min_confidence'], values['height'], values['service'])
+                                 self.vote_window_text(values),
+                                 values['min_confidence'], values['height'],
+                                 '、'.join(services))
         predicted = (position[0], position[1], position[2] + height)
         if norm(velocity) > 0.1 or not arrived(predicted, velocity, yaw, hover, safety):
             raise FlightError('原地垂直起飞终点/当前航向不匹配 A 的起飞设置，或地面未静止；检查 A 和 takeoff/height')
@@ -1342,25 +1655,26 @@ class Mission:
                 commanded_yaw = message.yaw
                 motion['watchdog'].check(now, position, motion['target']['xyz'], self.safety)
                 if position[2] <= motion['target']['xyz'][2] + values['tolerance']:
-                    # 到达投放高度（或地面比预计高、已经贴近地面）：立刻推舵机，
-                    # 再保持低空 push_wait 秒让载荷脱离（与舵机 hold_s 无关，hold_s=0 会一直保持）。
-                    # dry_run 测试模式只降高度、保持，然后爬回，不调用服务。
-                    motion['push_time'] = now
+                    # 到达投放高度（或地面比预计高、已经贴近地面）：开始执行投放步骤。
+                    # 每一步并发调用一组舵机服务，保持该步的 hold 秒后进入下一步；
+                    # dry_run 测试模式只降高度、保持 push_wait 秒，然后爬回，不调用服务。
                     self.status('DROP_PUSH')
                     if values.get('dry_run'):
+                        motion['push_time'] = now
                         motion['push_ok'] = None
+                        services = sorted({service for step in motion.get('steps') or values['steps']
+                                           for service in step['services']})
                         self.ros.logwarn('测试模式（dry_run）：已降到离地 %.2fm（world z=%.2f），'
                                          '不调用 %s、不投放；保持 %.1fs 后爬回 %s',
                                          position[2] - self.origin[2] - point_z_offset(point),
-                                         position[2], values['service'], values['push_wait'],
-                                         point['xyz'][2])
+                                         position[2], '、'.join(services) or '舵机',
+                                         values['push_wait'], point['xyz'][2])
                     else:
-                        motion['push_ok'] = self.begin_push(values)
-                        self.ros.loginfo('已降到离地 %.2fm（world z=%.2f），水平误差 %.3fm；保持 %.1fs 后爬回 %s',
+                        self.ros.loginfo('已降到离地 %.2fm（world z=%.2f），水平误差 %.3fm；开始投放',
                                          position[2] - self.origin[2] - point_z_offset(point),
                                          position[2],
-                                         math.dist(position[:2], motion['target']['xyz'][:2]),
-                                         values['push_wait'], point['xyz'][2])
+                                         math.dist(position[:2], motion['target']['xyz'][:2]))
+                        self.start_step(motion, 0, now)
                 elif elapsed > values['timeout']:
                     self.ros.logwarn('下降 %.1fs 仍未到离地 %.2fm（当前 %.2fm），放弃本次%s并爬回；'
                                      '若 %s 也在 points 里会重新尝试',
@@ -1372,7 +1686,16 @@ class Mission:
                 values = motion.get('plan') or self.drop_settings()
                 point = self.config['points'][leg['target']]
                 message = self.command(self.hold(motion['target']['xyz'], motion['yaw']))
-                if now - motion['push_time'] >= values['push_wait']:
+                finished = False
+                if values.get('dry_run'):
+                    finished = now - motion['push_time'] >= values['push_wait']
+                elif now - motion['step_time'] >= motion['step_hold']:
+                    next_index = (motion.get('step_index') or 0) + 1
+                    if next_index < len(motion.get('steps') or ()):
+                        self.start_step(motion, next_index, now)
+                    else:
+                        finished = True
+                if finished:
                     if values['once'] and motion.get('plan_name'):
                         self.mark_plan_done(motion['plan_name'], leg['target'])
                     motion = self.start_ascent(position, motion, point, now)
@@ -1468,6 +1791,11 @@ def main(argv=None):
     print('yaw_deg 仍为 world 绕 +Z 的绝对航向角，不是相对起飞机头方向。')
     print('任务脚本默认不限制坐标范围、不预检 Planner 虚拟边界；仍检查有限数值、定位和指令健康。'
           'safety/max_distance_from_origin>0 时按距起飞原点的水平半径围栏中止。Planner 原生地图/避障限制不变。')
+    safety = config.get('safety') or {}
+    print('起飞前实时性门禁：/Odometry 延迟 ≤%.2fs、频率 ≥%.1fHz、最近 %.0fs 内 EKF 超时告警 ≤%d 条；'
+          '任一不满足则拒绝起飞。'
+          % (safety.get('lio_max_delay', 0.30), safety.get('lio_min_rate', 8.0),
+             safety.get('ekf_error_window', 30.0), safety.get('ekf_error_limit', 0)))
     print(json.dumps(config['points'], ensure_ascii=False, indent=2))
     print('程控原地起飞 %.2fm → 起飞悬停点稳定 %.1fs → Planner 到 B 并悬停 %.1fs → Planner 到 C 并悬停 %.1fs'
           ' → 纯 PX4Ctrl 到 D 并悬停 %.1fs → Planner 到 E 并悬停 %.1fs → Planner 到 F 并悬停 %.1fs'
@@ -1479,31 +1807,49 @@ def main(argv=None):
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
            config['mission']['hover_seconds'],
            config.get('landing', {}).get('approach_height', 0.0)))
+    def describe_steps(steps):
+        items = []
+        for index, step in enumerate(steps or []):
+            services = step.get('services')
+            if isinstance(services, str):
+                services = [services]
+            items.append('第%d步 %s（保持 %.1fs）'
+                         % (index + 1, '+'.join(str(item) for item in services or []),
+                            float(step.get('hold', 2.5))))
+        return '；'.join(items)
+
     drop = config.get('hazard_drop') or {}
     if drop.get('enabled', False):
-        print('危险品投放已启用：%s 点连续稳定悬停 %.1fs，且最近 %d 帧里命中"离图像中心最近的'
-              '目标"的比例 ≥%.0f%%（该目标为"%s"且置信度≥%.2f）后，降到离地 %.2fm 调用 %s，'
-              '保持 %.1fs 后爬回该点高度继续任务；到点后最多等 %.1fs，超时只告警并继续。'
+        actions = describe_steps(drop.get('steps')) or ('调用 %s' % drop.get('service', '/servo/push'))
+        mode, window, frames, ratio = vote_raw_config(config, 'hazard_drop')
+        print('危险品投放已启用：%s 点连续稳定悬停 %.1fs，且%s（该目标为"%s"且置信度≥%.2f）后，'
+              '降到离地 %.2fm 执行：%s；到点后最多等 %.1fs，超时只告警并继续。'
               % ('/'.join(drop.get('points', ['C', 'D'])), drop.get('hover_seconds', 3.0),
-                 drop.get('vote_frames', 15), drop.get('vote_ratio', 0.60) * 100.0,
+                 vote_text(mode, window, frames, ratio),
                  drop.get('label', '危险品'), drop.get('min_confidence', 0.70),
-                 drop.get('height', 0.15), drop.get('service', '/servo/push'),
-                 drop.get('push_wait', 2.5), drop.get('wait_timeout', 10.0)))
+                 drop.get('height', 0.15), actions, drop.get('wait_timeout', 10.0)))
     else:
         print('危险品投放未启用（hazard_drop/enabled=false）：不调用舵机。')
     rescue = config.get('rescue_drop') or {}
     if rescue.get('enabled', False):
-        print('救援物资%s已启用：%s 点连续稳定悬停 %.1fs，且最近 %d 帧里命中"离图像中心最近的'
-              '目标"的比例 ≥%.0f%%（该目标为"%s"且置信度≥%.2f）后，降到离地 %.2fm；%s'
+        if rescue.get('dry_run', False):
+            detail = '测试模式不调用舵机、不投放，保持 %.1fs 后爬回。' % rescue.get('push_wait', 2.5)
+        else:
+            payloads = rescue.get('payloads') or []
+            if payloads:
+                detail = '按救援物资顺序：' + '；'.join(
+                    '%d 号物资[%s]' % (index + 2, describe_steps(payload.get('steps')))
+                    for index, payload in enumerate(payloads)) + '；用完即止。'
+            else:
+                detail = '到位后调用 %s 投放。' % rescue.get('service', '/servo/push')
+        mode, window, frames, ratio = vote_raw_config(config, 'rescue_drop')
+        print('救援物资%s已启用：%s 点连续稳定悬停 %.1fs，且%s（该目标为"%s"且置信度≥%.2f）后，'
+              '降到离地 %.2fm；%s'
               % ('降高度测试' if rescue.get('dry_run', False) else '投放',
                  '/'.join(rescue.get('points', ['E', 'F', 'G'])), rescue.get('hover_seconds', 3.0),
-                 rescue.get('vote_frames', 15), rescue.get('vote_ratio', 0.60) * 100.0,
+                 vote_text(mode, window, frames, ratio),
                  rescue.get('label', '救助人员'), rescue.get('min_confidence', 0.70),
-                 rescue.get('height', 0.15),
-                 '测试模式不调用舵机、不投放，保持 %.1fs 后爬回。' % rescue.get('push_wait', 2.5)
-                 if rescue.get('dry_run', False)
-                 else '到位后调用 %s 投放，保持 %.1fs 后爬回。'
-                      % (rescue.get('service', '/servo/push'), rescue.get('push_wait', 2.5))))
+                 rescue.get('height', 0.15), detail))
     else:
         print('救援物资投放未启用（rescue_drop/enabled=false）。')
     offsets = [(label, point_z_offset(point)) for label, point in config['points'].items()]

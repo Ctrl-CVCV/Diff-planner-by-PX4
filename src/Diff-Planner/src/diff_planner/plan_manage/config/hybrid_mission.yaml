@@ -9,20 +9,20 @@ controller_node: /px4ctrl
 # 离地高度），保证离地间隙仍是配置值。实测各点地面高低差后逐点填写，范围 ±0.30m。
 points:
   A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
-  B: {xyz: [1.75, 0.0, 0.8], yaw_deg: 0.0}
-  C: {xyz: [0.49,1.46, 0.80],yaw_deg: 180.0, z_offset: -0.018}
-  D: {xyz: [0.020,1.46,0.8], yaw_deg: 180.0, z_offset: -0.027}
-  E: {xyz: [1.98, 2.700, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.016}
+  B: {xyz: [1.75, 0.00, 0.8], yaw_deg: 0.0, z_offset: 0.00, measured: true}
+  C: {xyz: [0.420, 1.439, 0.80],yaw_deg: 180.0, z_offset: -0.004, measured: true}
+  D: {xyz: [-0.044, 1.426, 0.8], yaw_deg: 180.0, z_offset: -0.010, measured: true}
+  E: {xyz: [1.886, 2.775, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.001}
   # F 是 Planner → 直控的切换点：到点悬停 arrival_dwell 秒后切直控。实测后填坐标并把 measured 改成 true。
   # F、G 与 E 一样可能出现"救助人员"，z_offset 要逐点实测填写。
-  F: {xyz: [1.16, 2.72, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.03}
+  F: {xyz: [1.059, 2.749, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.014}
   # G、H 由普通 PX4Ctrl 直控，各自到点悬停 arrival_dwell 秒；实测后填坐标并改 measured。
-  G: {xyz: [2.758, 2.69,0.8], yaw_deg: 90.0, measured: true, z_offset: -0.005}
-  H: {xyz: [1.98, 2.700, 0.8], yaw_deg: 180.0, measured: true}
+  G: {xyz: [2.646, 2.797, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.012}
+  H: {xyz: [1.888, 2.774, 0.8], yaw_deg: 180.0, measured: true, z_offset: -0.001}
   # I 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
   # y=-0.10 是实测落点左偏的经验补偿：world y 指向起飞航向的左侧，取 -0.10 即向右挪 10cm。
   # 这个值按实测落点偏差调整，不是原始测量坐标；改完仍会按 landing/target_tolerance 收敛后再降落。
-  I: {xyz: [-0.06, -0.12, 0.8], yaw_deg: 180.0}
+  I: {xyz: [0.00, 0.05, 0.8], yaw_deg: 180.0}
 
 takeoff:
   height: 0.80
@@ -60,39 +60,73 @@ landing:
   # 不再报"状态异常"。仍可正常解锁的事件流（PX4 报 ON_GROUND 并断桨）优先。
   on_ground_height: 0.20
 
+# 检测有效区域（2026-11-22）：只接受中心落在图像中间带的目标，排除最上方、
+# 最下方各一段。悬停时"前面一个格子"的目标常出现在图像上/下边缘，容易误触发
+# 投放；比例按现场相机画面调整，单项限制在 0..0.45，默认各 0.25（即 cy 在
+# 0.25H..0.75H 之间才算有效）。
+detection:
+  exclude_top_ratio: 0.25
+  exclude_bottom_ratio: 0.25
+  # 目标确认投票（危险品/救援共用；各投放段内写同名键可单独覆盖）：
+  #   vote_mode: time   = 时间窗投票：最近 vote_window 秒内的命中比例；
+  #              frames = 帧数窗投票：最近 vote_frames 帧的命中比例。
+  #   vote_window: 时间窗宽度（秒），仅 time 模式生效。
+  #   vote_frames: frames 模式=窗口帧数；time 模式=窗口内最少投票数。
+  #   vote_ratio:  两种模式共用的命中比例阈值。
+  # 时间窗与识别帧率解耦；识别帧率在 yolo_trt_ros/config/yolo_trt.yaml（infer_fps: 20）配置。
+  vote_mode: time
+  vote_window: 0.5
+  vote_frames: 5
+  vote_ratio: 0.60
+
+# 物资投放机构（px4_servo 四路，实际接口为 PWM_MAIN5..8）：
+#   逻辑 1 号输出 / MAIN5（1143）：下放 3/4 号物资到底层；
+#   逻辑 2 号输出 / MAIN6（1143）：与 1 号同步下放；
+#   逻辑 3 号输出 / MAIN7（2500）：投放 1 号（消防）、3 号（救援）；
+#   逻辑 4 号输出 / MAIN8（2500）：投放 2 号（救援）、4 号（救援）。
+#   服务前缀 /servo1../servo4 对应上面四路逻辑输出；动作后舵机 hold_s 自动回 500。
+# 四种物资按 1→2→3→4 顺序投放，不一定装满；救援物资在 E/F/G 每确认一次投放一个，
+# 依次消耗 2、3、4 号，用完即止。
+#
 # 危险品投放（2026-10-31 起默认启用）。开启后：在 hazard_drop/points 里的航点连续稳定悬停
-# hover_seconds 秒，且最近 vote_frames 帧的投票确认"危险品"时，先在位置控制下降到离地 height，
-# 调用 service（/servo/push，std_srvs/Trigger；本任务用 px4_servo 的 hold_s=0，推出后不自动收回），
-# 保持 push_wait 秒后爬回该航点高度继续任务。到点后最多等 wait_timeout 秒，超时只告警并继续任务，
-# 不中止飞行。height 以起飞原点为基准（与 landing/approach_height 同一基准）。启用时预检要求舵机
-# 服务可用，否则拒绝起飞——宁可地面报错，也不要飞完一圈才发现投放没发生。
+# hover_seconds 秒，且 detection 段的投票窗口确认"危险品"时，先在位置控制下降到离地 height，
+# 依次执行 hazard_drop/steps 里的舵机动作（默认 /servo3/push = 1 号物资），
+# 再爬回该航点高度继续任务。到点后最多等 wait_timeout 秒，超时只告警并继续任务，
+# 不中止飞行。height 以起飞原点为基准（与 landing/approach_height 同一基准）。启用时预检要求
+# 所有投放服务可用，否则拒绝起飞——宁可地面报错，也不要飞完一圈才发现投放没发生。
 hazard_drop:
   enabled: true             # true 时启用；也可用 --hazard-drop / --no-hazard-drop 覆盖
   points: [C, D]            # 允许投放的航点；C、D 都在 0.8m 高度悬停
   label: 危险品             # 检测标签按子串匹配；YOLO label_names 里叫 "危险品标识"
   min_confidence: 0.70      # 单帧最低置信度（YOLO 节点自身已按 conf_thres=0.60 过滤）
   # 单帧里可能出现多个图案：只认"离图像中心最近的那一个"（无人机悬在投放目标正上方），
-  # 再判它是不是 label、置信度够不够。是否确认真危险品由最近若干帧投票决定：
-  # 最近 vote_frames 帧里命中比例达到 vote_ratio 才算确认；中间偶发丢帧/误检不会打断，
-  # 但持续误检超过该比例仍会触发——阈值按现场检测抖动调整。
-  vote_frames: 15           # 参与投票的最近帧数（YOLO 约 10–30 FPS，15 帧 ≈ 0.5–1.5s）
-  vote_ratio: 0.60          # 命中比例阈值；例如 15 帧里至少 9 帧命中
+  # 再判它是不是 label、置信度够不够。是否确认真危险品由 detection 段的投票窗口决定；
+  # 需要单独覆盖时在本段写 vote_mode/vote_window/vote_frames/vote_ratio 同名键。
   hover_seconds: 3.0        # 到点后连续稳定悬停多久才允许下降（与 arrival_dwell 一致）
   wait_timeout: 10.0        # 到点后最多等多久检测；超时告警并按原任务流继续
   height: 0.15              # 下降到离地高度（米，相对起飞原点）
   speed: 0.15               # 下降/爬升速度上限；不得大于 direct/max_speed
   tolerance: 0.02           # 高度到位判据（实测 z ≤ 目标 z + 该值）
   timeout: 20.0             # 单次下降或爬升超时；爬升超时按保护降落处理
-  push_wait: 2.5            # 推舵机后保持低空的时间，让载荷脱离；舵机本身不自动收回
+  push_wait: 2.5            # dry_run 测试模式下低空保持时间；实际舵机保持时间见 steps/hold
   max_age: 0.5              # 检测消息超过该时长没有更新，视为检测丢失
   once: true                # 全程最多投放一次；false 时 C、D 两点都会各投一次
-  service: /servo/push
+  # 1 号消防物资：MAIN7 500→2500，px4_servo hold_s=2s 后自动回 500
+  # offset_body: [前, 左] 米 —— 挂点相对机体中心的位置；机体反向后移，让挂点对准航点
+  steps:
+    - services: [/servo3/push]
+      hold: 3.0
+  offset_body: [0.075, 0.0]
 
-# 救援物资（2026-11-14 起默认启用，当前为"识别到目标只降高度、不投放"的测试模式）。
-# 在 rescue_drop/points（E、F、G）稳定确认"救助人员"后，下降到离地 height；
-# dry_run: true 时只降高度、保持 push_wait 秒后爬回，不调用舵机、不投放。
-# once: false —— E、F、G 各自独立判断，多个点都可能触发（单点多次投放暂未实现）。
-# 测试通过后把 dry_run 改成 false 即进入真实投放（必要时再扩展多次投放）。
+# 救援物资（2026-11-14 起默认启用，当前 dry_run=true 只测试降高度）。
+# E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 列表顺序消耗：
+#   第 1 次 → 2 号（/servo4 → MAIN8，500→2500）
+#   第 2 次 → 先 /servo1 + /servo2（MAIN5/6）同时打到 1143 把 3/4 号下放到底层，
+#             再 /servo3（MAIN7）投放 3 号
+#   第 3 次 → 4 号（/servo4 → MAIN8）
+# 用完即止；整场只检测到一次就只投 2 号，3/4 保持在下层。
+# once: false —— 每个点独立判断；dry_run: true 时只降高度、不调用舵机。
+# 测试通过后把 dry_run 改成 false 即进入真实投放。
 rescue_drop:
   enabled: true
   dry_run: true
@@ -100,8 +134,7 @@ rescue_drop:
   points: [E, F, G]
   label: 救助人员
   min_confidence: 0.70
-  vote_frames: 15
-  vote_ratio: 0.60
+  # 投票参数默认取 detection 段；需要单独覆盖时在本段写同名键。
   hover_seconds: 3.0
   wait_timeout: 10.0
   height: 0.15
@@ -110,7 +143,18 @@ rescue_drop:
   timeout: 20.0
   push_wait: 2.5
   max_age: 0.5
-  service: /servo/push
+  # offset_body: [前, 左] 米；1/3 号在机体中心前方 7.5cm，2/4 号在正后方 7.5cm
+  payloads:
+    - steps:
+        - {services: [/servo4/push], hold: 3.0}                    # 2 号救援物资
+      offset_body: [-0.075, 0.0]
+    - steps:
+        - {services: [/servo1/push, /servo2/push], hold: 3.0}      # 下放 3/4 号到底层
+        - {services: [/servo3/push], hold: 3.0}                    # 3 号救援物资
+      offset_body: [0.075, 0.0]
+    - steps:
+        - {services: [/servo4/push], hold: 3.0}                    # 4 号救援物资
+      offset_body: [-0.075, 0.0]
 
 mission:
   publish_hz: 50.0
@@ -143,6 +187,14 @@ safety:
   # LIO /Odometry 是 10 Hz 话题，实测间隔中位数 0.098s、p99 0.204s、最大 0.346s，
   # 不能套用 0.30s 的高频遥测超时：2026-10-29 起飞阶段因此误判 0.312s 断更而中止任务。
   lio_timeout: 1.0
+  # 起飞前实时性硬门禁（2026-11-20 事故后加入）：以下任一不满足就拒绝 --execute。
+  # 事故链：faster-lio 积压 10–15 s → EKF 报 "odom time out of buffer" → EKF 高度错误
+  # → PX4 融合错误视觉一路爬升撞顶。
+  lio_max_delay: 0.30          # /Odometry 时间戳落后上限（秒）
+  lio_min_rate: 8.0            # 起飞前 2 s 内实测 /Odometry 频率下限（Hz）
+  preflight_lio_seconds: 2.0   # 实时性采样时长
+  ekf_error_window: 30.0       # 检查最近多少秒内的 EKF 超时告警
+  ekf_error_limit: 0           # 该窗口内允许的 EKF 超时告警条数（0 = 一条都不允许）
   fcu_timeout: 3.0
   rc_timeout: 0.50
   map_timeout: 2.0
