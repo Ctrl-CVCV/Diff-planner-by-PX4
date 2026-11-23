@@ -1,0 +1,14 @@
+# YOLO TensorRT 节点运行参数：yolo_trt.launch 启动时加载本文件，
+# 修改后重新 roslaunch 即生效（无需重新编译）。
+# 识别帧率上限（Hz）：相机仍按自身帧率采集，超过该帧率的帧不进入推理。
+infer_fps: 20.0
+# 单帧置信度阈值；engine 内嵌 NMS 按 0.25 导出，调高有效、调低不可恢复。
+conf_thres: 0.60
+# 节点侧重叠框抑制阈值（max(IoU, IoM)，1.0 关闭）。
+nms_iou: 0.60
+# 凑批最长等待时间（秒）；10–20 FPS 输入下保持较小值以降低延迟。
+batch_timeout: 0.03
+# 并行推理 context/线程数（1–4）。
+infer_threads: 3
+# 本地预览窗口帧率。
+display_fps: 10.0
