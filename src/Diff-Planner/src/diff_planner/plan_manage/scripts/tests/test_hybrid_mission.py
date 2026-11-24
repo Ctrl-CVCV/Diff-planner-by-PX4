@@ -117,6 +117,11 @@ class ConfigAndGeometry(unittest.TestCase):
         self.assertAlmostEqual(abs(sample['yaw']), math.pi)
         self.assertGreater(sample['yaw_dot'], 0)
 
+    def test_recognition_trigger_selects_danger_or_portrait(self):
+        self.assertIs(mission.recognition_trigger('hazard_drop'), False)
+        self.assertIs(mission.recognition_trigger('rescue_drop'), True)
+        self.assertIsNone(mission.recognition_trigger('other'))
+
     def test_arrival_requires_yaw_and_low_speed(self):
         target = self.config['points']['B']
         self.assertTrue(mission.arrived(target['xyz'], (0, 0, 0), 0, target, self.config['safety']))
@@ -205,6 +210,21 @@ class RuntimeRules(unittest.TestCase):
             raise AssertionError('unexpected topic ' + key)
 
         runner.get = mock.Mock(side_effect=get)
+
+    def test_each_recognition_point_sends_one_trigger(self):
+        class EnableMessage:
+            def __init__(self):
+                self.data = None
+
+        self.runner.publishers['yolo_enable'] = mock.Mock()
+        self.runner.types['yolo_enable'] = EnableMessage
+        self.assertIs(self.runner.request_recognition('C'), False)
+        self.assertIs(self.runner.request_recognition('D'), False)
+        self.assertIs(self.runner.request_recognition('D'), None)
+        self.assertIs(self.runner.request_recognition('E'), True)
+        self.assertIs(self.runner.request_recognition('B'), None)
+        published = [call.args[0].data for call in self.runner.publishers['yolo_enable'].publish.call_args_list]
+        self.assertEqual(published, [False, False, True])
 
     def test_takeoff_grace_then_stable_hover_without_position_or_goal(self):
         self.simulate_takeoff()

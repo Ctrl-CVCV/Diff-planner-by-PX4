@@ -162,6 +162,15 @@ def direct_sample(start, start_yaw, target, duration, elapsed):
                 yaw=wrap(start_yaw + yaw_delta * blend), yaw_dot=yaw_delta * speed)
 
 
+def recognition_trigger(section):
+    """Bool sent once on /yolo/enable. False is one danger check, True is one portrait check."""
+    if section == 'hazard_drop':
+        return False
+    if section == 'rescue_drop':
+        return True
+    return None
+
+
 def mission_legs():
     """固定航段表。pass_through 的航点一进入 pass_radius 就切下一段，不悬停。"""
     return (
@@ -219,14 +228,15 @@ class Mission:
         from nav_msgs.msg import Odometry
         from quadrotor_msgs.msg import PositionCommand, Px4ctrlState, TakeoffLand
         from rosgraph_msgs.msg import Log
-        from std_msgs.msg import Empty, String
+        from std_msgs.msg import Bool, Empty, String
 
         self.ros, self.config = ros, config
         self.source_config = copy.deepcopy(config)
         self.origin = None
         self.read_only = read_only
         self.safety, self.settings = config['safety'], config['mission']
-        self.types = dict(goal=PoseStamped, command=PositionCommand, land=TakeoffLand, stop=Empty, status=String)
+        self.types = dict(goal=PoseStamped, command=PositionCommand, land=TakeoffLand, stop=Empty,
+                          status=String, yolo_enable=Bool)
         self.lock = threading.Lock()
         self.data = {}
         self.sustained = {}
@@ -241,6 +251,11 @@ class Mission:
                                                 latch=(key == 'status'))
                                for key, topic in (('goal', 'goal'), ('command', 'output_cmd'),
                                                   ('land', 'land'), ('stop', 'stop'), ('status', 'status'))}
+            if (config.get('hazard_drop', {}).get('enabled', False)
+                    or config.get('rescue_drop', {}).get('enabled', False)):
+                enable_topic = config['topics'].get('yolo_enable', '/yolo/enable')
+                self.publishers['yolo_enable'] = ros.Publisher(
+                    enable_topic, Bool, queue_size=1)
         message_types = dict(odom=Odometry, lio=Odometry, fcu=State, extended=ExtendedState, rc=RCIn,
                              ctrl=Px4ctrlState, planner_cmd=PositionCommand)
         # 两个投放计划都关闭时完全不订阅检测话题：默认任务流与之前一致，YOLO 是否在跑都不影响任务。
@@ -855,6 +870,37 @@ class Mission:
     def plan_votes_stable(self, section, now, values):
         _, last_attr = self.vote_attrs(section)
         return self.votes_stable(self.vote_buffer(section), getattr(self, last_attr, None), now, values)
+
+    def request_recognition(self, point):
+        """到达需要识别的航点时发送一次 /yolo/enable。
+
+        C/D 发 false，只做一次危险品识别；E/F/G 发 true，只做一次人像识别。
+        同一个航点重复进入悬停不再发送。
+        """
+        if getattr(self, '_recognition_point', None) == point:
+            return None
+        plan = self.plan_for(point)
+        if plan is None:
+            return None
+        section, values = plan
+        if values['once'] and self.plan_done(section, point):
+            return None
+        if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
+            return None
+        trigger = recognition_trigger(section)
+        if trigger is None:
+            return None
+        self._recognition_point = point
+        publisher = self.publishers.get('yolo_enable')
+        if publisher is None:
+            self.ros.logwarn('%s 点需要单次识别，但没有 /yolo/enable 发布者', point)
+            return trigger
+        message = self.types['yolo_enable']()
+        message.data = trigger
+        publisher.publish(message)
+        self.ros.loginfo('%s 点单次触发识别：/yolo/enable=%s（%s）',
+                         point, trigger, '人像' if trigger else '危险品')
+        return trigger
 
     def plan_for(self, point):
         """该航点适用的投放计划：('hazard_drop'|'rescue_drop', values) 或 None。
@@ -1486,6 +1532,7 @@ class Mission:
                     if endpoint_hold and arrived(position, velocity, yaw, target, self.safety):
                         if settled_since is None:
                             settled_since = now
+                            self.request_recognition(leg['target'])
                             self.ros.loginfo('%s 点已到达，开始连续稳定悬停计时', leg['target'])
                     else:
                         settled_since = None
@@ -1564,7 +1611,9 @@ class Mission:
                 target = self.config['points'][leg['target']]
                 message = self.command(self.hold(target['xyz'], math.radians(target['yaw_deg'])))
                 if arrived(position, velocity, yaw, target, self.safety):
-                    settled_since = settled_since if settled_since is not None else now
+                    if settled_since is None:
+                        settled_since = now
+                        self.request_recognition(leg['target'])
                     if now - settled_since >= self.settings['arrival_dwell']:
                         action = self.plan_decision(now, leg['target'], settled_since)
                         if action == 'drop':

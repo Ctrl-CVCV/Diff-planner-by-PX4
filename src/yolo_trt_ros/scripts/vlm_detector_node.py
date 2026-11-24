@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Replace the TensorRT detector with Qwen2.5-VL, keeping the YOLO topics.
 
-/yolo/enable (std_msgs/Bool) still gates recognition. Each time recognition is
-enabled, the VLM is called once. A positive result is republished, with the
-colored square tracked by OpenCV, for about 4 seconds. Turning the topic off
-and on again allows one new request. The JSON on /yolo/detections uses the
+/yolo/enable (std_msgs/Bool) is a one-shot trigger, not a level switch.
+false runs one danger-sign recognition. true runs one portrait recognition.
+The task comes from that message; border color is not used. A positive result
+is republished for about 4 seconds. The JSON on /yolo/detections uses the
 original YOLO fields and Chinese labels.
 """
 import json
@@ -21,7 +21,6 @@ from std_msgs.msg import Bool, String
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_client import VisionError, classify_frame
-from vlm_frame import extract_frame_roi
 from vlm_recognition import (
     RecognitionHold, disabled_payload, enabled_payload, make_detection,
     should_call_vlm, yolo_class,
@@ -37,7 +36,6 @@ class VlmDetectorNode(object):
         self.preview_topic = rospy.get_param('~preview_topic', '/yolo/preview/image')
         self.detections_topic = rospy.get_param('~detections_topic', '/yolo/detections')
         self.enable_topic = str(rospy.get_param('~enable_topic', '/yolo/enable'))
-        self.enabled = bool(rospy.get_param('~enabled_default', True))
         self.endpoint = rospy.get_param(
             '~endpoint', 'http://127.0.0.1:8080/v1/chat/completions')
         self.model = rospy.get_param('~model', 'qwen2.5-vl-7b')
@@ -57,7 +55,8 @@ class VlmDetectorNode(object):
         self.camera_fps = 0.0
         self._last_frame_time = None
         self.busy = False
-        self._vlm_called = False
+        self._pending = None
+        self._active = False
         self._generation = 0
         self._last_publish = 0.0
         self._published = 0
@@ -72,25 +71,23 @@ class VlmDetectorNode(object):
             self.enable_topic, Bool, self._on_enable, queue_size=1)
         self.disabled_timer = rospy.Timer(rospy.Duration(_PUBLISH_INTERVAL),
                                           self._publish_disabled)
-        rospy.loginfo('VLM detector: %s model %s | hold %.1fs | %s -> %s',
-                      self.endpoint, self.model, self.hold.seconds,
-                      self.image_topic, self.detections_topic)
+        rospy.loginfo('VLM detector waits for one %s message: false=危险品, true=人像 | hold %.1fs',
+                      self.enable_topic, self.hold.seconds)
 
     def _on_enable(self, message):
-        enabled = bool(message.data)
+        mode = 'portrait' if bool(message.data) else 'sign'
         with self.lock:
-            if enabled == self.enabled:
-                return
-            self.enabled = enabled
-            self.hold.clear()
-            self._vlm_called = False
             self._generation += 1
-        rospy.logwarn('识别已启用：本次只请求一次 VLM' if enabled
-                      else '识别已暂停（%s=false）：停止推理，发布空检测' % self.enable_topic)
+            self._pending = mode
+            self._active = True
+            self.hold.clear()
+        rospy.logwarn('单次识别触发：%s（%s=%s）',
+                      '人像' if mode == 'portrait' else '危险品',
+                      self.enable_topic, bool(message.data))
 
     def _publish_disabled(self, _event):
         with self.lock:
-            if self.enabled:
+            if self._active or self.hold.running(time.monotonic()):
                 return
             camera_fps = self.camera_fps
         self._publish_json(disabled_payload(rospy.Time.now().to_sec(), camera_fps))
@@ -107,42 +104,27 @@ class VlmDetectorNode(object):
             self.sequence += 1
             sequence = self.sequence
             self.latest = (sequence, message.header, frame)
-            enabled = self.enabled
             hold = self.hold
-            called = self._vlm_called
+            pending = self._pending
             busy = self.busy
             camera_fps = self.camera_fps
             processed_fps = self._processed_fps(now)
-        if not enabled:
-            return
         holding = hold.running(now)
-        if holding or not called:
-            only_color = hold.color if holding else None
-            try:
-                roi, info = extract_frame_roi(frame, only_color=only_color)
-            except Exception as exc:
-                rospy.logwarn_throttle(5.0, 'frame ROI failed: %s', exc)
-                roi, info = None, {'found': False}
-        else:
-            roi, info = None, {'found': False}
         detection = None
-        if holding:
-            if info.get('found') and info.get('border_color') == hold.color:
-                hold.note_box(info['bbox'])
-                detection = make_detection(
-                    hold.class_id, hold.label, info['bbox'],
-                    frame.shape[1], frame.shape[0])
-            elif hold.bbox is not None and not hold.missed(now):
-                detection = make_detection(
-                    hold.class_id, hold.label, hold.bbox,
-                    frame.shape[1], frame.shape[0])
-            else:
-                with self.lock:
-                    hold.clear()
-        elif should_call_vlm(info.get('found'), called, busy, False):
-            self._start_inference(roi, info)
+        if holding and hold.bbox is not None:
+            detection = make_detection(
+                hold.class_id, hold.label, hold.bbox,
+                frame.shape[1], frame.shape[0])
+        elif should_call_vlm(pending, busy, holding):
+            self._start_inference(frame, pending)
+        with self.lock:
+            if not self.hold.running(now) and not self.busy and self._pending is None:
+                self._active = False
+            active = self._active
         preview = self._draw(frame, detection, hold if detection else None, now)
         self._publish_preview(preview, message.header)
+        if not active:
+            return
         if now - self._last_publish < _PUBLISH_INTERVAL:
             return
         payload = enabled_payload(
@@ -153,43 +135,46 @@ class VlmDetectorNode(object):
             camera_fps, processed_fps)
         self._publish_json(payload)
 
-    def _start_inference(self, roi, info):
+    def _start_inference(self, frame, mode):
         with self.lock:
-            if not self.enabled or not should_call_vlm(
-                    True, self._vlm_called, self.busy,
-                    self.hold.running(time.monotonic())):
+            if not should_call_vlm(
+                    self._pending, self.busy, self.hold.running(time.monotonic())):
+                return
+            if self._pending != mode:
                 return
             self.busy = True
-            self._vlm_called = True
+            self._pending = None
             generation = self._generation
+        snapshot = frame.copy()
+        height, width = snapshot.shape[:2]
         worker = threading.Thread(
             target=self._infer, name='vlm_infer',
-            args=(roi, info, generation), daemon=True)
+            args=(snapshot, mode, width, height, generation), daemon=True)
         worker.start()
 
-    def _infer(self, roi, info, generation):
+    def _infer(self, frame, mode, width, height, generation):
         try:
             text, elapsed_ms = classify_frame(
-                roi, info['border_color'], self.endpoint, self.model,
+                frame, mode, self.endpoint, self.model,
                 self.timeout, self.max_image_side)
-            mapped = yolo_class(info['border_color'], text)
-            rospy.loginfo('VLM %s -> %s (%.0f ms)', info['border_color'], text, elapsed_ms)
+            mapped = yolo_class(mode, text)
+            rospy.loginfo('VLM %s -> %s (%.0f ms)', mode, text, elapsed_ms)
         except VisionError as exc:
             rospy.logwarn('VLM request failed: %s', exc)
             mapped = None
             elapsed_ms = 0.0
         with self.lock:
             self.busy = False
-            if not self.enabled or generation != self._generation:
+            if generation != self._generation:
                 return
             if mapped is None:
-                rospy.loginfo('本次启用的 VLM 请求已用完，不再重复识别')
+                self._active = False
+                rospy.loginfo('本次触发未确认目标，不再重复识别')
                 return
             class_id, label = mapped
-            self.hold.start(time.monotonic(), info['border_color'], class_id, label,
-                            elapsed_ms)
-            rospy.loginfo('已确认目标，之后 %.1f 秒只跟踪方框', self.hold.seconds)
-        # The image callback republishes the tracked box for the hold window.
+            self.hold.start(time.monotonic(), mode, class_id, label, elapsed_ms)
+            self.hold.note_box((0.0, 0.0, float(width), float(height)))
+            rospy.loginfo('已确认目标，之后 %.1f 秒继续发布该结果', self.hold.seconds)
 
     def _draw(self, frame, detection, hold, now):
         canvas = frame.copy()

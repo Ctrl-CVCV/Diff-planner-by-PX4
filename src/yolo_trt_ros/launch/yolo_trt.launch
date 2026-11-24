@@ -23,9 +23,9 @@
   <arg name="window_height" default="480"/>
   <arg name="preview_topic" default="/yolo/preview/image"/>
   <arg name="detections_topic" default="/yolo/detections"/>
-  <!--识别总开关：std_msgs/Bool，true=识别，false=暂停推理并发布空检测-->
+  <!--单次触发：std_msgs/Bool。false=识别一次危险品，true=识别一次人像。-->
   <arg name="enable_topic" default="/yolo/enable"/>
-  <arg name="enabled_default" default="true"/>
+  <arg name="enabled_default" default="false"/>
 
   <include file="$(find yolo_trt_ros)/launch/camera.launch">
     <arg name="device" value="$(arg device)"/>
@@ -39,7 +39,8 @@
   </include>
 
   <!-- 本分支用 VLM 替换 TensorRT YOLO。话题和检测 JSON 保持不变。
-       每次 /yolo/enable 置 true 只请求一次 VLM，确认后用 OpenCV 跟踪方框。
+       /yolo/enable 每来一条消息只识别一次：false 认危险品，true 认人像。
+       类别由这条消息决定，不靠边框颜色。enabled_default 不再自动开始识别。
        engine_path / label_names 仍可从命令行传入，识别不再读取它们。 -->
   <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen">
     <env name="PYTHONNOUSERSITE" value="1"/>
@@ -49,7 +50,6 @@
     <param name="preview_topic" value="$(arg preview_topic)" type="str"/>
     <param name="detections_topic" value="$(arg detections_topic)" type="str"/>
     <param name="enable_topic" value="$(arg enable_topic)" type="str"/>
-    <param name="enabled_default" value="$(arg enabled_default)" type="bool"/>
     <param name="endpoint" value="$(arg endpoint)" type="str"/>
     <param name="model" value="$(arg model)" type="str"/>
     <param name="hold_seconds" value="$(arg hold_seconds)" type="double"/>

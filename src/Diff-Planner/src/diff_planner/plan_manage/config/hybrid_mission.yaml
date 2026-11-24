@@ -238,6 +238,9 @@ topics:
   stop: /mandatory_stop_to_planner
   land: /px4ctrl/takeoff_land
   status: /drone_0_mission/state
-  # YOLO 检测结果（std_msgs/String，JSON：detections[].label/confidence）。只有
-  # hazard_drop/enabled=true 时才订阅，默认任务流不碰这个话题。
+  # YOLO 检测结果（std_msgs/String，JSON：detections[].label/confidence）。
+  # 危险品或救援投放启用时才订阅。
   detections: /yolo/detections
+  # 单次识别触发（std_msgs/Bool）。到达 C/D 发 false，做一次危险品识别；
+  # 到达 E/F/G 发 true，做一次人像识别。不是持续开关。
+  yolo_enable: /yolo/enable

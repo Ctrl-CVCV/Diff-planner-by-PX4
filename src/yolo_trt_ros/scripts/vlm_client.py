@@ -1,4 +1,4 @@
-"""Ask the local Qwen2.5-VL server what is inside one colored frame."""
+"""Ask the local Qwen2.5-VL server to classify one camera image."""
 import base64
 import json
 import time
@@ -8,14 +8,14 @@ import urllib.request
 import cv2
 
 SIGN_PROMPT = (
-    '判断方框内的标志属于哪一类，只输出一个标签，不要解释。'
+    '判断画面中的标志属于哪一类，只输出一个标签，不要解释。'
     '危险标志：易燃、易爆、有毒有害、腐蚀等危险警示标志。'
     '非危险标志：行人、注意等普通警告标志，或其它非危险标志。'
     '只能从这两项中选一项：危险标志、非危险标志。'
 )
 SIGN_GRAMMAR = 'root ::= "危险标志" | "非危险标志"'
 PORTRAIT_PROMPT = (
-    '观察方框内的画面，判断主体是不是人物头像，只输出一个标签，不要解释。'
+    '观察画面，判断主体是不是人物头像，只输出一个标签，不要解释。'
     '人物头像：真实的人头或人脸，可以是照片。'
     '不是人物头像：风景、绘画、标志、物品，或没有清楚的人头。'
     '只能从这两项中选一项：人物头像、不是人物头像。'
@@ -27,15 +27,15 @@ class VisionError(RuntimeError):
     pass
 
 
-def classify_frame(image, border_color, endpoint, model='qwen2.5-vl-7b',
+def classify_frame(image, mode, endpoint, model='qwen2.5-vl-7b',
                    timeout=60.0, max_image_side=640):
-    """Return (text, elapsed_ms) for a red sign frame or a blue portrait frame."""
-    if border_color == 'red':
+    """Return (text, elapsed_ms). mode is sign or portrait, chosen by the trigger."""
+    if mode == 'sign':
         prompt, grammar = SIGN_PROMPT, SIGN_GRAMMAR
-    elif border_color == 'blue':
+    elif mode == 'portrait':
         prompt, grammar = PORTRAIT_PROMPT, PORTRAIT_GRAMMAR
     else:
-        raise ValueError('border_color must be red or blue')
+        raise ValueError('mode must be sign or portrait')
     data_url = _jpeg_data_url(image, max_image_side)
     body = {
         'model': model,
