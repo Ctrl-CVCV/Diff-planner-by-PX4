@@ -425,6 +425,15 @@ wait_for_node() {
   return 1
 }
 
+rosnode_alive() {
+  # 注册表里有名字不代表进程还活着：优先 ping 一次，避免把残留注册当成在运行。
+  timeout 6 rosnode ping -c 1 "$1" 2>/dev/null | grep -q 'reply from'
+}
+
+cleanup_dead_nodes() {
+  echo y | timeout 8 rosnode cleanup >/dev/null 2>&1 || true
+}
+
 show_livox_network() {
   echo "当前网卡地址："
   ip -br -4 address 2>/dev/null || true
@@ -485,21 +494,42 @@ else
 fi
 
 # 2. MAVROS
+started_mavros=0
 if mavros_state_connected 5; then
   echo "复用现有 MAVROS/PX4 连接。"
 else
   if (( START_MAVROS )); then
     if timeout 5 rosnode list 2>/dev/null | grep -Fxq '/mavros'; then
-      # Two MAVROS processes would fight over /dev/ttyACM0 and the /mavros
-      # node name. If it is already running, wait instead of starting another.
-      echo "已有 /mavros 节点但尚未连接 PX4，等待其连接（不重复启动 MAVROS）。"
-    else
+      if rosnode_alive /mavros; then
+        # Two MAVROS processes would fight over /dev/ttyACM0 and the node name.
+        echo "已有 /mavros 进程但尚未连接 PX4，先等待它连接。"
+      else
+        echo "发现 /mavros 只是残留注册（进程已不在），清理后重新启动 MAVROS。"
+        cleanup_dead_nodes
+      fi
+    fi
+    if ! timeout 5 rosnode list 2>/dev/null | grep -Fxq '/mavros'; then
       start_component mavros roslaunch mavros px4.launch "fcu_url:=$FCU_URL"
+      started_mavros=1
     fi
   else
     echo "--no-mavros 已指定，等待外部MAVROS连接。"
   fi
-  wait_for_mavros_connection "$WAIT_MAVROS"
+  if ! wait_for_mavros_connection "$WAIT_MAVROS"; then
+    if (( START_MAVROS )); then
+      echo "等待 PX4 连接失败：重启 MAVROS 后再试一次……" >&2
+      if (( started_mavros )); then
+        stop_component mavros
+      fi
+      rosnode_alive /mavros && timeout 5 rosnode kill /mavros >/dev/null 2>&1 || true
+      cleanup_dead_nodes
+      sleep 1
+      start_component mavros roslaunch mavros px4.launch "fcu_url:=$FCU_URL"
+      wait_for_mavros_connection "$WAIT_MAVROS" || exit 1
+    else
+      exit 1
+    fi
+  fi
 fi
 
 # 3. Keep PX4 IMU stream at a usable rate.
