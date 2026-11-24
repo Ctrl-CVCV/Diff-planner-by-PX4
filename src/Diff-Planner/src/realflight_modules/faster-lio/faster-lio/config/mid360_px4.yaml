@@ -73,6 +73,10 @@ max_iteration: 3
 # filter_size_surf: voxel size for the per-scan downsample. This is the main knob for
 # how dense /laserMapping/cloud_registered looks (the published cloud is
 # scan_down_world_ unless publish/dense_publish_en is true) AND for CPU cost.
+# 0.15 m measured 10 Hz on an idle MAXN, but with YOLO + rosbag recording on the
+# same Jetson it ran out of margin and backed up to 10-15 s (2026-11-20 incident).
+# Rolled back to 0.20 m on 2026-11-21 to keep CPU headroom; the preflight LIO
+# realtime gate in hybrid_mission.py is still the hard protection.
 filter_size_surf: 0.20
 # filter_size_map: voxel size used when deciding whether a world point is added to
 # the local map; it does not change the published cloud density but also costs CPU.
