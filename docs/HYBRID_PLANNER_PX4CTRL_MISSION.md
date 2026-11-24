@@ -441,7 +441,7 @@ LIO 必须仍收到消息，并通过基于本机 `time.monotonic()` 接收时�
 
 | 层 | 位置 | 参数 | 现值 | 性质 |
 | --- | --- | --- | --- | --- |
-| Planner 优化 | `launch/exp/run_exp_single_lio.launch` | `max_vel` | 0.30 | 软惩罚项，不是硬约束；实测指令 0.37～0.56 m/s |
+| Planner 优化 | `launch/exp/run_exp_single_lio.launch` | `max_vel` | 0.30 | 软惩罚项，不是硬约束；实测指令 0.37～0.59 m/s |
 | Planner 验收 | `launch/include/advanced_param_exp.xml` | `optimization/vel_tolerance` | 0.20 | 验收上限 = `max_vel + vel_tolerance` = 0.50 |
 | traj_server | `traj_server.cpp` | 无 | — | 原样转发，不缩放 |
 | PX4Ctrl 指令 | `controller.cpp` `cmd_ctrl` | 无 | — | 位置指令不做速度钳位 |
