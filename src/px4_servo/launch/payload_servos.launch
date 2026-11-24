@@ -1,0 +1,70 @@
+<launch>
+  <!-- 四路物资舵机（I/O PWM OUT = PWM_MAIN 5..8，2026-11-20 校对）：
+         逻辑 1 号输出 -> MAIN5：1143 µs —— 下放 3、4 号物资到底层，动作后自动回 500；
+         逻辑 2 号输出 -> MAIN6：1143 µs —— 与 1 号同步下放；
+         逻辑 3 号输出 -> MAIN7：2500 µs —— 投放 1 号（消防）、3 号（救援）；
+         逻辑 4 号输出 -> MAIN8：2500 µs —— 投放 2 号（救援）、4 号（救援）。
+
+       飞控侧必须先把这四路设成 Offboard Actuator Set（否则节点拒绝动作）：
+         PWM_MAIN_FUNC5..8 = 301 / 302 / 303 / 304（任意 301..308 均可，四路必须唯一）
+         PWM_MAIN_MIN5..8  = 500
+         PWM_MAIN_MAX5..8  = 2500
+         PWM_MAIN_DIS5..8  = 500
+         PWM_MAIN_FAIL5..8 = 500
+       上锁时输出 DIS=500，即收起位。
+
+       每个通道是一个独立节点，服务/话题前缀分别为 /servo1 .. /servo4：
+         /servoN/push        std_srvs/Trigger   打到 push_us，hold_s 秒后自动回位
+         /servoN/retract     std_srvs/Trigger   立即回 rest_us
+         /servoN/set_pulse_us std_msgs/Float32  任意脉宽（调试用）
+         /servoN/state       std_msgs/String    状态 -->
+  <arg name="param_prefix" default="PWM_MAIN"/>
+  <arg name="rest_us" default="500.0"/>
+  <arg name="hold_s" default="2.0"/>
+  <arg name="arming_gate" default="any"/>
+  <arg name="dry_run" default="false"/>
+
+  <node pkg="px4_servo" type="servo_aux_pwm.py" name="servo_pwm1" output="screen">
+    <param name="channel" value="5"/>
+    <param name="param_prefix" value="$(arg param_prefix)"/>
+    <param name="rest_us" value="$(arg rest_us)"/>
+    <param name="push_us" value="1143.0"/>
+    <param name="hold_s" value="$(arg hold_s)"/>
+    <param name="arming_gate" value="$(arg arming_gate)"/>
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="topic_prefix" value="/servo1"/>
+  </node>
+
+  <node pkg="px4_servo" type="servo_aux_pwm.py" name="servo_pwm2" output="screen">
+    <param name="channel" value="6"/>
+    <param name="param_prefix" value="$(arg param_prefix)"/>
+    <param name="rest_us" value="$(arg rest_us)"/>
+    <param name="push_us" value="1143.0"/>
+    <param name="hold_s" value="$(arg hold_s)"/>
+    <param name="arming_gate" value="$(arg arming_gate)"/>
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="topic_prefix" value="/servo2"/>
+  </node>
+
+  <node pkg="px4_servo" type="servo_aux_pwm.py" name="servo_pwm3" output="screen">
+    <param name="channel" value="7"/>
+    <param name="param_prefix" value="$(arg param_prefix)"/>
+    <param name="rest_us" value="$(arg rest_us)"/>
+    <param name="push_us" value="2500.0"/>
+    <param name="hold_s" value="$(arg hold_s)"/>
+    <param name="arming_gate" value="$(arg arming_gate)"/>
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="topic_prefix" value="/servo3"/>
+  </node>
+
+  <node pkg="px4_servo" type="servo_aux_pwm.py" name="servo_pwm4" output="screen">
+    <param name="channel" value="8"/>
+    <param name="param_prefix" value="$(arg param_prefix)"/>
+    <param name="rest_us" value="$(arg rest_us)"/>
+    <param name="push_us" value="2500.0"/>
+    <param name="hold_s" value="$(arg hold_s)"/>
+    <param name="arming_gate" value="$(arg arming_gate)"/>
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="topic_prefix" value="/servo4"/>
+  </node>
+</launch>
