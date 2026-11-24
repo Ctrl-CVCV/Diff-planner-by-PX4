@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Replace the TensorRT detector with Qwen2.5-VL, keeping the YOLO topics.
+
+/yolo/enable (std_msgs/Bool) still gates recognition. A positive result is
+republished, with the colored square tracked by OpenCV, for about 4 seconds.
+The JSON on /yolo/detections uses the original YOLO fields and Chinese labels.
+"""
+import json
+import os
+import sys
+import threading
+import time
+
+import cv2
+import rospy
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, String
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vlm_client import VisionError, classify_frame
+from vlm_frame import extract_frame_roi
+from vlm_recognition import (
+    RecognitionHold, disabled_payload, enabled_payload, make_detection, yolo_class,
+)
+
+_CLASS_COLORS = ((0, 220, 0), (0, 96, 255), (255, 200, 0))
+_PUBLISH_INTERVAL = 0.1
+
+
+class VlmDetectorNode(object):
+    def __init__(self):
+        self.image_topic = rospy.get_param('~image_topic', '/usb_cam/image_raw')
+        self.preview_topic = rospy.get_param('~preview_topic', '/yolo/preview/image')
+        self.detections_topic = rospy.get_param('~detections_topic', '/yolo/detections')
+        self.enable_topic = str(rospy.get_param('~enable_topic', '/yolo/enable'))
+        self.enabled = bool(rospy.get_param('~enabled_default', True))
+        self.endpoint = rospy.get_param(
+            '~endpoint', 'http://127.0.0.1:8080/v1/chat/completions')
+        self.model = rospy.get_param('~model', 'qwen2.5-vl-7b')
+        self.timeout = float(rospy.get_param('~timeout', 60.0))
+        self.max_image_side = int(rospy.get_param('~max_image_side', 640))
+        self.display = bool(rospy.get_param('~show_window', True))
+        self.window_name = str(rospy.get_param('~window_name', 'VLM Recognition'))
+        self.hold = RecognitionHold(float(rospy.get_param('~hold_seconds', 4.0)))
+        if self.display and not os.environ.get('DISPLAY'):
+            rospy.logwarn('show_window is set but DISPLAY is empty; preview window disabled')
+            self.display = False
+
+        self.bridge = CvBridge()
+        self.lock = threading.Lock()
+        self.latest = None
+        self.sequence = 0
+        self.camera_fps = 0.0
+        self._last_frame_time = None
+        self.busy = False
+        self._next_request = 0.0
+        self._last_publish = 0.0
+        self._published = 0
+        self._publish_mark = time.monotonic()
+        self.processed_fps = 0.0
+        self.preview_pub = rospy.Publisher(self.preview_topic, Image, queue_size=1)
+        self.detections_pub = rospy.Publisher(self.detections_topic, String, queue_size=1)
+        self.image_sub = rospy.Subscriber(
+            self.image_topic, Image, self._on_image, queue_size=1,
+            buff_size=16 * 1024 * 1024)
+        self.enable_sub = rospy.Subscriber(
+            self.enable_topic, Bool, self._on_enable, queue_size=1)
+        self.disabled_timer = rospy.Timer(rospy.Duration(_PUBLISH_INTERVAL),
+                                          self._publish_disabled)
+        rospy.loginfo('VLM detector: %s model %s | hold %.1fs | %s -> %s',
+                      self.endpoint, self.model, self.hold.seconds,
+                      self.image_topic, self.detections_topic)
+
+    def _on_enable(self, message):
+        enabled = bool(message.data)
+        with self.lock:
+            if enabled == self.enabled:
+                return
+            self.enabled = enabled
+            self.hold.clear()
+            self._next_request = 0.0
+        rospy.logwarn('识别已启用：恢复 VLM' if enabled
+                      else '识别已暂停（%s=false）：停止推理，发布空检测' % self.enable_topic)
+
+    def _publish_disabled(self, _event):
+        with self.lock:
+            if self.enabled:
+                return
+            camera_fps = self.camera_fps
+        self._publish_json(disabled_payload(rospy.Time.now().to_sec(), camera_fps))
+
+    def _on_image(self, message):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(message, desired_encoding='bgr8')
+        except Exception as exc:
+            rospy.logwarn_throttle(5.0, 'image conversion failed: %s', exc)
+            return
+        now = time.monotonic()
+        with self.lock:
+            self._note_camera_fps(now)
+            self.sequence += 1
+            sequence = self.sequence
+            self.latest = (sequence, message.header, frame)
+            enabled = self.enabled
+            hold = self.hold
+            camera_fps = self.camera_fps
+            processed_fps = self._processed_fps(now)
+        if not enabled:
+            return
+        only_color = hold.color if hold.running(now) else None
+        try:
+            roi, info = extract_frame_roi(frame, only_color=only_color)
+        except Exception as exc:
+            rospy.logwarn_throttle(5.0, 'frame ROI failed: %s', exc)
+            roi, info = None, {'found': False}
+        detection = None
+        if hold.running(now):
+            if info.get('found') and info.get('border_color') == hold.color:
+                hold.note_box(info['bbox'])
+                detection = make_detection(
+                    hold.class_id, hold.label, info['bbox'],
+                    frame.shape[1], frame.shape[0])
+            elif hold.bbox is not None and not hold.missed(now):
+                detection = make_detection(
+                    hold.class_id, hold.label, hold.bbox,
+                    frame.shape[1], frame.shape[0])
+            else:
+                with self.lock:
+                    hold.clear()
+        elif info.get('found') and now >= self._next_request:
+            self._start_inference(roi, info)
+        preview = self._draw(frame, detection, hold if detection else None, now)
+        self._publish_preview(preview, message.header)
+        if now - self._last_publish < _PUBLISH_INTERVAL:
+            return
+        payload = enabled_payload(
+            message.header.stamp.to_sec(), message.header.frame_id, sequence,
+            frame.shape[1], frame.shape[0],
+            [] if detection is None else [detection],
+            0.0 if detection is None else hold.inference_ms,
+            camera_fps, processed_fps)
+        self._publish_json(payload)
+
+    def _start_inference(self, roi, info):
+        with self.lock:
+            if self.busy or not self.enabled or self.hold.running(time.monotonic()):
+                return
+            self.busy = True
+        worker = threading.Thread(
+            target=self._infer, name='vlm_infer', args=(roi, info), daemon=True)
+        worker.start()
+
+    def _infer(self, roi, info):
+        try:
+            text, elapsed_ms = classify_frame(
+                roi, info['border_color'], self.endpoint, self.model,
+                self.timeout, self.max_image_side)
+            mapped = yolo_class(info['border_color'], text)
+            rospy.loginfo('VLM %s -> %s (%.0f ms)', info['border_color'], text, elapsed_ms)
+        except VisionError as exc:
+            rospy.logwarn('VLM request failed: %s', exc)
+            mapped = None
+            elapsed_ms = 0.0
+            text = ''
+        with self.lock:
+            self.busy = False
+            if not self.enabled:
+                return
+            if mapped is None:
+                self._next_request = time.monotonic() + 1.0
+                return
+            class_id, label = mapped
+            self.hold.start(time.monotonic(), info['border_color'], class_id, label,
+                            elapsed_ms)
+        # The image callback republishes the tracked box for the hold window.
+
+    def _draw(self, frame, detection, hold, now):
+        canvas = frame.copy()
+        if detection is not None:
+            color = _CLASS_COLORS[detection['class_id'] % len(_CLASS_COLORS)]
+            p1 = (int(round(detection['x1'])), int(round(detection['y1'])))
+            p2 = (int(round(detection['x2'])), int(round(detection['y2'])))
+            cv2.rectangle(canvas, p1, p2, color, 2)
+            remaining = max(0.0, hold.until - now) if hold and hold.until else 0.0
+            cv2.putText(canvas, '%s %.1fs' % (detection['label'], remaining),
+                        (p1[0], max(24, p1[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, color, 2, cv2.LINE_AA)
+        if self.display:
+            try:
+                cv2.imshow(self.window_name, canvas)
+                cv2.waitKey(1)
+            except cv2.error as exc:
+                rospy.logwarn('preview window disabled: %s', exc)
+                self.display = False
+        return canvas
+
+    def _publish_preview(self, canvas, header):
+        preview = self.bridge.cv2_to_imgmsg(canvas, encoding='bgr8')
+        preview.header = header
+        self.preview_pub.publish(preview)
+
+    def _publish_json(self, payload):
+        self.detections_pub.publish(String(data=json.dumps(
+            payload, ensure_ascii=False, separators=(',', ':'))))
+        now = time.monotonic()
+        self._last_publish = now
+        self._published += 1
+
+    def _note_camera_fps(self, now):
+        if self._last_frame_time is not None:
+            delta = now - self._last_frame_time
+            if delta > 0:
+                instant = 1.0 / delta
+                self.camera_fps = (instant if self.camera_fps == 0.0
+                                   else 0.9 * self.camera_fps + 0.1 * instant)
+        self._last_frame_time = now
+
+    def _processed_fps(self, now):
+        elapsed = now - self._publish_mark
+        if elapsed >= 1.0:
+            self.processed_fps = self._published / elapsed
+            self._published = 0
+            self._publish_mark = now
+        return self.processed_fps
+
+
+def main():
+    rospy.init_node('yolo_trt_detector')
+    try:
+        VlmDetectorNode()
+    except (ValueError, TypeError) as exc:
+        rospy.logfatal('Invalid VLM detector configuration: %s', exc)
+        return 1
+    rospy.spin()
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

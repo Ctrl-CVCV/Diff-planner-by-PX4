@@ -15,11 +15,17 @@
        display_fps 统一在 config/yolo_trt.yaml 修改（启动时加载）。
        15W 模式下本地预览已限帧；需要全速识别时把 infer_fps 调到 60。 -->
   <arg name="show_window" default="true"/>
-  <arg name="window_name" default="YOLO TensorRT"/>
+  <arg name="window_name" default="VLM Recognition"/>
+  <arg name="endpoint" default="http://127.0.0.1:8080/v1/chat/completions"/>
+  <arg name="model" default="qwen2.5-vl-7b"/>
+  <arg name="hold_seconds" default="4.0"/>
   <arg name="window_width" default="640"/>
   <arg name="window_height" default="480"/>
   <arg name="preview_topic" default="/yolo/preview/image"/>
   <arg name="detections_topic" default="/yolo/detections"/>
+  <!--识别总开关：std_msgs/Bool，true=识别，false=暂停推理并发布空检测-->
+  <arg name="enable_topic" default="/yolo/enable"/>
+  <arg name="enabled_default" default="true"/>
 
   <include file="$(find yolo_trt_ros)/launch/camera.launch">
     <arg name="device" value="$(arg device)"/>
@@ -32,18 +38,19 @@
     <arg name="image_topic" value="$(arg image_topic)"/>
   </include>
 
-  <node pkg="yolo_trt_ros" type="yolo_trt_node.py" name="yolo_trt_detector" output="screen">
+  <!-- 本分支用 VLM 替换 TensorRT YOLO。话题和检测 JSON 保持不变。
+       engine_path / label_names 仍可从命令行传入，识别不再读取它们。 -->
+  <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen">
     <env name="PYTHONNOUSERSITE" value="1"/>
-    <!-- 识别/批处理/预览参数：直接编辑 config/yolo_trt.yaml，重新 roslaunch 生效。 -->
-    <rosparam command="load" file="$(find yolo_trt_ros)/config/yolo_trt.yaml"/>
-    <param name="engine_path" value="$(arg engine_path)" type="str"/>
     <param name="image_topic" value="$(arg image_topic)" type="str"/>
-    <param name="label_names" value="$(arg label_names)" type="str"/>
     <param name="show_window" value="$(arg show_window)" type="bool"/>
     <param name="window_name" value="$(arg window_name)" type="str"/>
-    <param name="window_width" value="$(arg window_width)" type="int"/>
-    <param name="window_height" value="$(arg window_height)" type="int"/>
     <param name="preview_topic" value="$(arg preview_topic)" type="str"/>
     <param name="detections_topic" value="$(arg detections_topic)" type="str"/>
+    <param name="enable_topic" value="$(arg enable_topic)" type="str"/>
+    <param name="enabled_default" value="$(arg enabled_default)" type="bool"/>
+    <param name="endpoint" value="$(arg endpoint)" type="str"/>
+    <param name="model" value="$(arg model)" type="str"/>
+    <param name="hold_seconds" value="$(arg hold_seconds)" type="double"/>
   </node>
 </launch>
