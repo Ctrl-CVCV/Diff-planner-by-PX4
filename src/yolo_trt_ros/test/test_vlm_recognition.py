@@ -10,9 +10,9 @@ from vlm_recognition import (
 class VlmRecognitionTests(unittest.TestCase):
     def test_labels_match_the_yolo_names_the_mission_searches(self):
         self.assertEqual(yolo_class('sign', '危险标志'), (0, '危险品标识'))
-        self.assertIsNone(yolo_class('sign', '非危险标志'))
+        self.assertEqual(yolo_class('sign', '非危险标志'), (1, '其它标识'))
         self.assertEqual(yolo_class('portrait', '人物头像'), (2, '救助人员'))
-        self.assertIsNone(yolo_class('portrait', '不是人物头像'))
+        self.assertEqual(yolo_class('portrait', '不是人物头像'), (1, '其它标识'))
         self.assertIsNone(yolo_class('sign', '人物头像'))
         self.assertIsNone(yolo_class('portrait', '危险标志'))
 
@@ -43,12 +43,14 @@ class VlmRecognitionTests(unittest.TestCase):
 
     def test_positive_result_stays_marked_for_four_seconds(self):
         hold = RecognitionHold(4.0)
-        hold.start(100.0, 'red', 0, '危险品标识', 1800.0)
+        hold.start(100.0, 'sign', 0, '危险品标识', 1800.0)
+        self.assertEqual(hold.shape, 'triangle')
         self.assertTrue(hold.running(103.9))
         self.assertFalse(hold.running(104.0))
         hold.clear()
         self.assertFalse(hold.running(100.1))
-        hold.start(100.0, 'red', 0, '危险品标识', 1800.0)
+        hold.start(100.0, 'portrait', 2, '救助人员', 1800.0)
+        self.assertEqual(hold.shape, 'square')
         hold.note_box((10, 10, 40, 40))
         self.assertFalse(hold.missed(100.2))
         self.assertTrue(hold.missed(100.6))

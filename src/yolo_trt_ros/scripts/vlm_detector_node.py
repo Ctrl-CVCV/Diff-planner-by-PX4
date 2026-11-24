@@ -3,9 +3,11 @@
 
 /yolo/enable (std_msgs/Bool) is a one-shot trigger, not a level switch.
 false runs one danger-sign recognition. true runs one portrait recognition.
-The task comes from that message; border color is not used. A positive result
-is republished for about 4 seconds. The JSON on /yolo/detections uses the
-original YOLO fields and Chinese labels.
+The task comes from that message; border color does not choose the label.
+An accepted label is republished for about 4 seconds while OpenCV follows the
+target: a sign is boxed on its triangle, and a portrait on its blue square.
+非危险标志 and 不是人物头像 are published as class 1, 其它标识. The JSON on
+/yolo/detections uses the original YOLO fields.
 """
 import json
 import os
@@ -14,6 +16,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
@@ -21,6 +24,7 @@ from std_msgs.msg import Bool, String
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_client import VisionError, classify_frame
+from vlm_track import follow_target
 from vlm_recognition import (
     RecognitionHold, disabled_payload, enabled_payload, make_detection,
     should_call_vlm, yolo_class,
@@ -111,10 +115,8 @@ class VlmDetectorNode(object):
             processed_fps = self._processed_fps(now)
         holding = hold.running(now)
         detection = None
-        if holding and hold.bbox is not None:
-            detection = make_detection(
-                hold.class_id, hold.label, hold.bbox,
-                frame.shape[1], frame.shape[0])
+        if holding:
+            detection = self._track(frame, hold, now)
         elif should_call_vlm(pending, busy, holding):
             self._start_inference(frame, pending)
         with self.lock:
@@ -146,13 +148,32 @@ class VlmDetectorNode(object):
             self._pending = None
             generation = self._generation
         snapshot = frame.copy()
-        height, width = snapshot.shape[:2]
         worker = threading.Thread(
             target=self._infer, name='vlm_infer',
-            args=(snapshot, mode, width, height, generation), daemon=True)
+            args=(snapshot, mode, generation), daemon=True)
         worker.start()
 
-    def _infer(self, frame, mode, width, height, generation):
+    def _track(self, frame, hold, now):
+        """Move the published box to the triangle or square in this frame."""
+        tracked = None
+        if hold.shape in ('triangle', 'square'):
+            try:
+                tracked = follow_target(frame, hold.shape, hold.bbox)
+            except (ValueError, cv2.error) as exc:
+                rospy.logwarn_throttle(5.0, 'target tracking failed: %s', exc)
+        if tracked is not None:
+            hold.note_box(tracked['bbox'], tracked.get('polygon'))
+            return make_detection(
+                hold.class_id, hold.label, hold.bbox, frame.shape[1], frame.shape[0])
+        if hold.bbox is not None and not hold.missed(now):
+            return make_detection(
+                hold.class_id, hold.label, hold.bbox, frame.shape[1], frame.shape[0])
+        if hold.bbox is not None:
+            with self.lock:
+                hold.clear()
+        return None
+
+    def _infer(self, frame, mode, generation):
         try:
             text, elapsed_ms = classify_frame(
                 frame, mode, self.endpoint, self.model,
@@ -173,19 +194,25 @@ class VlmDetectorNode(object):
                 return
             class_id, label = mapped
             self.hold.start(time.monotonic(), mode, class_id, label, elapsed_ms)
-            self.hold.note_box((0.0, 0.0, float(width), float(height)))
-            rospy.loginfo('已确认目标，之后 %.1f 秒继续发布该结果', self.hold.seconds)
+            rospy.loginfo('已确认%s，之后 %.1f 秒跟随%s', label, self.hold.seconds,
+                          '三角形边框' if self.hold.shape == 'triangle' else '正方形外框')
 
     def _draw(self, frame, detection, hold, now):
         canvas = frame.copy()
         if detection is not None:
             color = _CLASS_COLORS[detection['class_id'] % len(_CLASS_COLORS)]
-            p1 = (int(round(detection['x1'])), int(round(detection['y1'])))
-            p2 = (int(round(detection['x2'])), int(round(detection['y2'])))
-            cv2.rectangle(canvas, p1, p2, color, 2)
+            if hold is not None and hold.polygon:
+                cv2.polylines(canvas, [np.int32(hold.polygon)], True, color, 2)
+                anchor = hold.polygon[0]
+            else:
+                anchor = (int(round(detection['x1'])), int(round(detection['y1'])))
+                cv2.rectangle(
+                    canvas, anchor,
+                    (int(round(detection['x2'])), int(round(detection['y2']))),
+                    color, 2)
             remaining = max(0.0, hold.until - now) if hold and hold.until else 0.0
             cv2.putText(canvas, '%s %.1fs' % (detection['label'], remaining),
-                        (p1[0], max(24, p1[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX,
+                        (anchor[0], max(24, anchor[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX,
                         0.6, color, 2, cv2.LINE_AA)
         if self.display:
             try:

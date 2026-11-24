@@ -40,19 +40,27 @@ class RecognitionHold(object):
         self.label = None
         self.inference_ms = 0.0
         self.bbox = None
+        self.polygon = None
+        self.shape = None
         self.miss_since = None
 
-    def start(self, now, color, class_id, label, inference_ms):
+    def start(self, now, mode, class_id, label, inference_ms):
         self.until = float(now) + self.seconds
-        self.color = color
+        self.color = mode
+        self.shape = 'triangle' if mode == 'sign' else 'square' if mode == 'portrait' else None
         self.class_id = int(class_id)
         self.label = label
         self.inference_ms = float(inference_ms)
         self.bbox = None
+        self.polygon = None
         self.miss_since = None
 
-    def note_box(self, bbox):
+    def note_box(self, bbox, polygon=None):
         self.bbox = tuple(bbox)
+        if polygon is None:
+            self.polygon = None
+        else:
+            self.polygon = tuple((int(round(x)), int(round(y))) for x, y in polygon)
         self.miss_since = None
 
     def missed(self, now, grace=0.3):
@@ -71,6 +79,8 @@ class RecognitionHold(object):
         self.label = None
         self.inference_ms = 0.0
         self.bbox = None
+        self.polygon = None
+        self.shape = None
         self.miss_since = None
 
 
@@ -80,11 +90,16 @@ def should_call_vlm(pending, busy, holding):
 
 
 def yolo_class(mode, text):
-    """Return (class_id, label) or None. The trigger selects the question."""
-    if mode == 'sign' and text == '危险标志':
+    """Return (class_id, label) or None. The trigger selects the question.
+
+    Both negative answers use the original YOLO class 1, 其它标识.
+    """
+    if mode == 'sign' and text in ('危险标志', '非危险标志'):
         return YOLO_CLASSES[text]
     if mode == 'portrait' and text == '人物头像':
         return YOLO_CLASSES[text]
+    if mode == 'portrait' and text == '不是人物头像':
+        return YOLO_CLASSES['非危险标志']
     return None
 
 

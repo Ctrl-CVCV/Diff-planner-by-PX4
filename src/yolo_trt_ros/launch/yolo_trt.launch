@@ -40,6 +40,7 @@
 
   <!-- 本分支用 VLM 替换 TensorRT YOLO。话题和检测 JSON 保持不变。
        /yolo/enable 每来一条消息只识别一次：false 认危险品，true 认人像。
+       确认后约 4 秒由 OpenCV 跟随：标志框三角形边框，人像框蓝色正方形外框。
        类别由这条消息决定，不靠边框颜色。enabled_default 不再自动开始识别。
        engine_path / label_names 仍可从命令行传入，识别不再读取它们。 -->
   <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen">

@@ -61,6 +61,47 @@ def extract_frame_roi(image, min_area_ratio=0.01, max_area_ratio=0.92, pad_px=4,
     }
 
 
+def list_square_frames(image, color, min_area_ratio=0.01, max_area_ratio=0.92, pad_px=4):
+    """Every hollow square frame of one color, as [x, y, width, height]."""
+    height, width = _require_bgr(image)
+    if color not in ('red', 'blue'):
+        raise ValueError('color must be red or blue')
+    if not 0 < min_area_ratio < max_area_ratio <= 1 or pad_px < 0:
+        raise ValueError('invalid square frame limits')
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    masks = {'red': _color_mask(hsv, _RED_RANGES), 'blue': _color_mask(hsv, (_BLUE_RANGE,))}
+    frame_area = float(width * height)
+    boxes = []
+    contours, _ = cv2.findContours(masks[color], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if not min_area_ratio * frame_area <= area <= max_area_ratio * frame_area:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter < 1:
+            continue
+        approx = cv2.approxPolyDP(contour, 0.03 * perimeter, True)
+        if not _usable_square(approx):
+            continue
+        points = approx.reshape(4, 2).astype(np.float32)
+        x, y, box_w, box_h = cv2.boundingRect(np.round(points).astype(np.int32))
+        if box_w < 24 or box_h < 24:
+            continue
+        fill = float(masks[color][y:y + box_h, x:x + box_w].mean()) / 255.0
+        if not 0.05 <= fill <= 0.45:
+            continue
+        winner, _counts = _ring_vote(points, masks, (height, width))
+        if winner != color:
+            continue
+        x0 = max(0, x - pad_px)
+        y0 = max(0, y - pad_px)
+        x1 = min(width, x + box_w + pad_px)
+        y1 = min(height, y + box_h + pad_px)
+        if x1 - x0 >= 16 and y1 - y0 >= 16:
+            boxes.append([int(x0), int(y0), int(x1 - x0), int(y1 - y0)])
+    return boxes
+
+
 def _require_bgr(image):
     if image is None or getattr(image, 'size', 0) == 0 or len(getattr(image, 'shape', ())) < 2:
         raise ValueError('empty image')
