@@ -1,0 +1,108 @@
+{
+  "date": "2026-11-24",
+  "model": "20261124_best_v8n",
+  "task": "detect",
+  "classes": {
+    "0": "danger_sign",
+    "1": "other_warning",
+    "2": "head"
+  },
+  "deployment": {
+    "launch_file": "src/yolo_trt_ros/launch/yolo_trt.launch",
+    "engine_path": "$(find yolo_trt_ros)/models/20261124_best_v8n.engine",
+    "engine_path_resolved": "/home/nvidia/gcs_ws/src/yolo_trt_ros/models/20261124_best_v8n.engine",
+    "compat_engine_path": "/home/nvidia/yolo/best.engine",
+    "compat_weights_path": "/home/nvidia/yolo/best.pt",
+    "label_names": "危险品标识,其它标识,救助人员"
+  },
+  "source_weights": {
+    "path": "/home/nvidia/yolo/20261124_best_v8n.pt",
+    "size_bytes": 6248234,
+    "sha256": "01c73ba69d593b664d10631cc004c966582f521c358c14d6923c71cf78fcb68c",
+    "md5": "0ecd808901330d1bdfa473f006f4e505",
+    "trained_date": "2026-11-23T22:16:00.347895",
+    "trained_ultralytics": "8.4.54"
+  },
+  "artifacts": {
+    "onnx": {
+      "path": "/home/nvidia/yolo/20261124_best_v8n.onnx",
+      "size_bytes": 12345746,
+      "sha256": "56354ec1fd48f446df8782db7cdd3afbbfc2857c7697d12f2fef0efe39980ae9"
+    },
+    "engine": {
+      "path": "/home/nvidia/yolo/20261124_best_v8n.engine",
+      "size_bytes": 9582130,
+      "sha256": "62c612a9457772dd8c097fe369552d3b880d92418357e68beecf46196ba1de79",
+      "md5": "82ea92fecb2c833abd9cea0f64c789aa"
+    },
+    "engine_in_repo": {
+      "path": "src/yolo_trt_ros/models/20261124_best_v8n.engine",
+      "size_bytes": 9582130,
+      "sha256": "62c612a9457772dd8c097fe369552d3b880d92418357e68beecf46196ba1de79",
+      "note": "committed via .gitignore exception for src/yolo_trt_ros/models/*.engine"
+    }
+  },
+  "export": {
+    "command": "YOLO('20261124_best_v8n.pt').export(format='engine', device=0, half=True, imgsz=640, workspace=4, batch=4, nms=True)",
+    "ultralytics": "8.4.192",
+    "torch": "2.1.0a0+41361538.nv23.06",
+    "tensorrt": "8.5.2.2",
+    "cuda_device": "Orin",
+    "build_seconds": 599.4,
+    "embedded_metadata": {
+      "description": "Ultralytics 20261124_best_v8n model trained on D:\\20250526\\datasets\\yolo3cls\\data.yaml",
+      "date": "2026-11-24T16:08:00+08:00",
+      "batch": 4,
+      "imgsz": [640, 640],
+      "nms": true,
+      "quantize": 16,
+      "workspace": 4,
+      "dynamic": false,
+      "simplify": true
+    }
+  },
+  "verification": {
+    "runtime_python": "system python 3.8.10, numpy 1.17.4, tensorrt 8.5.2.2",
+    "pipeline": "scripts/yolo_trt_node.py:YoloEngine preprocess/launch/finish",
+    "bindings": [
+      { "name": "images", "io": "input", "shape": [4, 3, 640, 640], "dtype": "FLOAT" },
+      { "name": "output0", "io": "output", "shape": [4, 300, 6], "dtype": "FLOAT" }
+    ],
+    "smoke_test": {
+      "frame": "synthetic 640x480 BGR",
+      "batch_size": 4,
+      "batch_ms": 38.79,
+      "detections": 0,
+      "note": "no real target in synthetic frame; engine load and decode path OK"
+    },
+    "launch_param_check": {
+      "command": "roslaunch --dump-params yolo_trt_ros yolo_trt.launch",
+      "engine_path_resolved": "/home/nvidia/gcs_ws/src/yolo_trt_ros/models/20261124_best_v8n.engine"
+    },
+    "checksums_match_repo_copy": true
+  },
+  "supersedes": {
+    "checkpoint": "docs/checkpoints/yolo_20261123_fix",
+    "note": "20261124_best_v8n replaces 20261123_fix as active model"
+  },
+  "rollback": {
+    "weights_backup": {
+      "path": "/home/nvidia/yolo/best.pt.bak-20261124-1609",
+      "size_bytes": 6244842,
+      "sha256": "9942b2ed737ab3f3b5002f8475fb31ff2e37911862d84272ea0c16232a9bc096",
+      "restores": "20261123_fix_best_v8n weights"
+    },
+    "engine_backup": {
+      "path": "/home/nvidia/yolo/best.engine.bak-20261124-1609",
+      "size_bytes": 9645945,
+      "sha256": "cbd3b5de31a9a025c6a64d23671319d98b4f3218b0af191aa6130992951f55fc",
+      "restores": "20261123_fix_best_v8n engine"
+    },
+    "commands": [
+      "cp -p /home/nvidia/yolo/best.pt.bak-20261124-1609 /home/nvidia/yolo/best.pt",
+      "cp -p /home/nvidia/yolo/best.engine.bak-20261124-1609 /home/nvidia/yolo/best.engine",
+      "git checkout 6189167 -- src/yolo_trt_ros/launch/yolo_trt.launch"
+    ]
+  },
+  "repo_head_at_record": "61891670732fa11a344f32558fcad86e66c74a05"
+}

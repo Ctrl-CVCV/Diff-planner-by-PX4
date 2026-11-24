@@ -55,6 +55,8 @@ core.[0-9]*
 
 # TensorRT engines are GPU/machine-specific build artifacts
 *.engine
+# 例外：随包发布的检测模型 engine（Orin + TRT 8.5.2.2 构建，见 docs/checkpoints/yolo_20261124）
+!src/yolo_trt_ros/models/*.engine
 
 # Editor state, local backups and machine-specific credentials
 .vscode/

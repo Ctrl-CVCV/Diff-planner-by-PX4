@@ -7,7 +7,7 @@
   <arg name="buffer_size" default="2"/>
   <arg name="frame_id" default="camera_optical_frame"/>
   <arg name="image_topic" default="/usb_cam/image_raw"/>
-  <arg name="engine_path" default="/home/nvidia/yolo/best.engine"/>
+  <arg name="engine_path" default="$(find yolo_trt_ros)/models/20261124_best_v8n.engine"/>
   <!-- Engine class ids: 0=danger_sign, 1=other_warning, 2=head. Display names are
        comma-separated by class id. -->
   <arg name="label_names" default="危险品标识,其它标识,救助人员"/>
