@@ -74,6 +74,11 @@ class RecognitionHold(object):
         self.miss_since = None
 
 
+def should_call_vlm(frame_found, already_called, busy, holding):
+    """Each enable cycle may request the VLM once. The hold only tracks in OpenCV."""
+    return bool(frame_found) and not already_called and not busy and not holding
+
+
 def yolo_class(border_color, text):
     """Return (class_id, label) or None when the frame content is not a target."""
     if border_color == 'red' and text in ('危险标志', '非危险标志'):

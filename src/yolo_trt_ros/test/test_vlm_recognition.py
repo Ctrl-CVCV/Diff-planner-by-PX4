@@ -2,7 +2,8 @@
 import unittest
 
 from vlm_recognition import (
-    RecognitionHold, disabled_payload, enabled_payload, make_detection, yolo_class,
+    RecognitionHold, disabled_payload, enabled_payload, make_detection,
+    should_call_vlm, yolo_class,
 )
 
 
@@ -31,6 +32,13 @@ class VlmRecognitionTests(unittest.TestCase):
         self.assertFalse(empty['enabled'])
         self.assertEqual(empty['detections'], [])
         self.assertEqual(empty['count'], 0)
+
+    def test_each_enable_calls_the_vlm_once(self):
+        self.assertTrue(should_call_vlm(True, False, False, False))
+        self.assertFalse(should_call_vlm(True, True, False, False))
+        self.assertFalse(should_call_vlm(False, False, False, False))
+        self.assertFalse(should_call_vlm(True, False, True, False))
+        self.assertFalse(should_call_vlm(True, False, False, True))
 
     def test_positive_result_stays_marked_for_four_seconds(self):
         hold = RecognitionHold(4.0)

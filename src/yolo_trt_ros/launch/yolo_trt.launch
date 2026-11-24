@@ -39,6 +39,7 @@
   </include>
 
   <!-- 本分支用 VLM 替换 TensorRT YOLO。话题和检测 JSON 保持不变。
+       每次 /yolo/enable 置 true 只请求一次 VLM，确认后用 OpenCV 跟踪方框。
        engine_path / label_names 仍可从命令行传入，识别不再读取它们。 -->
   <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen">
     <env name="PYTHONNOUSERSITE" value="1"/>

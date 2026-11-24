@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Replace the TensorRT detector with Qwen2.5-VL, keeping the YOLO topics.
 
-/yolo/enable (std_msgs/Bool) still gates recognition. A positive result is
-republished, with the colored square tracked by OpenCV, for about 4 seconds.
-The JSON on /yolo/detections uses the original YOLO fields and Chinese labels.
+/yolo/enable (std_msgs/Bool) still gates recognition. Each time recognition is
+enabled, the VLM is called once. A positive result is republished, with the
+colored square tracked by OpenCV, for about 4 seconds. Turning the topic off
+and on again allows one new request. The JSON on /yolo/detections uses the
+original YOLO fields and Chinese labels.
 """
 import json
 import os
@@ -21,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_client import VisionError, classify_frame
 from vlm_frame import extract_frame_roi
 from vlm_recognition import (
-    RecognitionHold, disabled_payload, enabled_payload, make_detection, yolo_class,
+    RecognitionHold, disabled_payload, enabled_payload, make_detection,
+    should_call_vlm, yolo_class,
 )
 
 _CLASS_COLORS = ((0, 220, 0), (0, 96, 255), (255, 200, 0))
@@ -54,7 +57,8 @@ class VlmDetectorNode(object):
         self.camera_fps = 0.0
         self._last_frame_time = None
         self.busy = False
-        self._next_request = 0.0
+        self._vlm_called = False
+        self._generation = 0
         self._last_publish = 0.0
         self._published = 0
         self._publish_mark = time.monotonic()
@@ -79,8 +83,9 @@ class VlmDetectorNode(object):
                 return
             self.enabled = enabled
             self.hold.clear()
-            self._next_request = 0.0
-        rospy.logwarn('识别已启用：恢复 VLM' if enabled
+            self._vlm_called = False
+            self._generation += 1
+        rospy.logwarn('识别已启用：本次只请求一次 VLM' if enabled
                       else '识别已暂停（%s=false）：停止推理，发布空检测' % self.enable_topic)
 
     def _publish_disabled(self, _event):
@@ -104,18 +109,24 @@ class VlmDetectorNode(object):
             self.latest = (sequence, message.header, frame)
             enabled = self.enabled
             hold = self.hold
+            called = self._vlm_called
+            busy = self.busy
             camera_fps = self.camera_fps
             processed_fps = self._processed_fps(now)
         if not enabled:
             return
-        only_color = hold.color if hold.running(now) else None
-        try:
-            roi, info = extract_frame_roi(frame, only_color=only_color)
-        except Exception as exc:
-            rospy.logwarn_throttle(5.0, 'frame ROI failed: %s', exc)
+        holding = hold.running(now)
+        if holding or not called:
+            only_color = hold.color if holding else None
+            try:
+                roi, info = extract_frame_roi(frame, only_color=only_color)
+            except Exception as exc:
+                rospy.logwarn_throttle(5.0, 'frame ROI failed: %s', exc)
+                roi, info = None, {'found': False}
+        else:
             roi, info = None, {'found': False}
         detection = None
-        if hold.running(now):
+        if holding:
             if info.get('found') and info.get('border_color') == hold.color:
                 hold.note_box(info['bbox'])
                 detection = make_detection(
@@ -128,7 +139,7 @@ class VlmDetectorNode(object):
             else:
                 with self.lock:
                     hold.clear()
-        elif info.get('found') and now >= self._next_request:
+        elif should_call_vlm(info.get('found'), called, busy, False):
             self._start_inference(roi, info)
         preview = self._draw(frame, detection, hold if detection else None, now)
         self._publish_preview(preview, message.header)
@@ -144,14 +155,19 @@ class VlmDetectorNode(object):
 
     def _start_inference(self, roi, info):
         with self.lock:
-            if self.busy or not self.enabled or self.hold.running(time.monotonic()):
+            if not self.enabled or not should_call_vlm(
+                    True, self._vlm_called, self.busy,
+                    self.hold.running(time.monotonic())):
                 return
             self.busy = True
+            self._vlm_called = True
+            generation = self._generation
         worker = threading.Thread(
-            target=self._infer, name='vlm_infer', args=(roi, info), daemon=True)
+            target=self._infer, name='vlm_infer',
+            args=(roi, info, generation), daemon=True)
         worker.start()
 
-    def _infer(self, roi, info):
+    def _infer(self, roi, info, generation):
         try:
             text, elapsed_ms = classify_frame(
                 roi, info['border_color'], self.endpoint, self.model,
@@ -162,17 +178,17 @@ class VlmDetectorNode(object):
             rospy.logwarn('VLM request failed: %s', exc)
             mapped = None
             elapsed_ms = 0.0
-            text = ''
         with self.lock:
             self.busy = False
-            if not self.enabled:
+            if not self.enabled or generation != self._generation:
                 return
             if mapped is None:
-                self._next_request = time.monotonic() + 1.0
+                rospy.loginfo('本次启用的 VLM 请求已用完，不再重复识别')
                 return
             class_id, label = mapped
             self.hold.start(time.monotonic(), info['border_color'], class_id, label,
                             elapsed_ms)
+            rospy.loginfo('已确认目标，之后 %.1f 秒只跟踪方框', self.hold.seconds)
         # The image callback republishes the tracked box for the hold window.
 
     def _draw(self, frame, detection, hold, now):
