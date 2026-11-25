@@ -17,8 +17,10 @@ import threading
 import time
 
 import cv2
+import numpy as np
 import rospy
 from cv_bridge import CvBridge
+from PIL import Image as PilImage, ImageDraw, ImageFont
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
@@ -30,8 +32,26 @@ from vlm_recognition import (
     should_call_vlm, yolo_class,
 )
 
-_CLASS_COLORS = ((0, 220, 0), (0, 96, 255), (255, 200, 0))
+# 方框和文字颜色（BGR）：危险品红、救助人员蓝、其它标识橙。
+_CLASS_COLORS = {0: (0, 0, 255), 1: (0, 165, 255), 2: (255, 0, 0)}
+_CLASS_LABELS = {0: '危险品', 1: '其它标识', 2: '救助人员'}
 _PUBLISH_INTERVAL = 0.1
+_LABEL_FONT_SIZE = 20
+_LABEL_FONT_CANDIDATES = (
+    ('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', 2),
+    ('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc', 2),
+    ('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc', 0),
+)
+
+
+def _load_label_font():
+    for path, index in _LABEL_FONT_CANDIDATES:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, _LABEL_FONT_SIZE, index=index)
+            except OSError:
+                continue
+    return None
 
 
 class VlmDetectorNode(object):
@@ -53,6 +73,9 @@ class VlmDetectorNode(object):
             self.display = False
 
         self.bridge = CvBridge()
+        self._label_font = _load_label_font()
+        if self._label_font is None:
+            rospy.logwarn('找不到中文字体（fonts-noto-cjk），预览文字将退化为英文')
         self.lock = threading.Lock()
         self.latest = None
         self.sequence = 0
@@ -132,7 +155,17 @@ class VlmDetectorNode(object):
             if not self.hold.running(now) and not self.busy and self._pending is None:
                 self._active = False
             active = self._active
-        preview = self._draw(frame, detection, hold if detection else None, now)
+        if detection is not None:
+            status = ''
+        elif busy:
+            status = 'VLM 识别中…'
+        elif pending in ('sign', 'portrait'):
+            status = '等待外层矩形边框…'
+        elif holding:
+            status = '目标跟丢'
+        else:
+            status = ''
+        preview = self._draw(frame, detection, hold if detection else None, now, status)
         self._publish_preview(preview, message.header)
         if not active:
             return
@@ -206,19 +239,20 @@ class VlmDetectorNode(object):
             rospy.loginfo('已确认%s，之后 %.1f 秒跟随%s', label, self.hold.seconds,
                           '与三角形相切的矩形' if self.hold.shape == 'triangle' else '最外层边框')
 
-    def _draw(self, frame, detection, hold, now):
+    def _draw(self, frame, detection, hold, now, status=''):
         canvas = frame.copy()
         if detection is not None:
-            color = _CLASS_COLORS[detection['class_id'] % len(_CLASS_COLORS)]
-            anchor = (int(round(detection['x1'])), int(round(detection['y1'])))
-            cv2.rectangle(
-                canvas, anchor,
-                (int(round(detection['x2'])), int(round(detection['y2']))),
-                color, 2)
+            class_id = int(detection['class_id'])
+            color = _CLASS_COLORS.get(class_id, _CLASS_COLORS[1])
+            x1, y1 = int(round(detection['x1'])), int(round(detection['y1']))
+            x2, y2 = int(round(detection['x2'])), int(round(detection['y2']))
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
             remaining = max(0.0, hold.until - now) if hold and hold.until else 0.0
-            cv2.putText(canvas, '%s %.1fs' % (detection['label'], remaining),
-                        (anchor[0], max(24, anchor[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, color, 2, cv2.LINE_AA)
+            label = _CLASS_LABELS.get(class_id, detection['label'])
+            self._draw_text(canvas, '%s %.1fs' % (label, remaining),
+                            x1, y1, color, above=True)
+        elif status:
+            self._draw_text(canvas, status, 10, 10, (0, 200, 255), above=False)
         if self.display:
             try:
                 cv2.imshow(self.window_name, canvas)
@@ -227,6 +261,31 @@ class VlmDetectorNode(object):
                 rospy.logwarn('preview window disabled: %s', exc)
                 self.display = False
         return canvas
+
+    def _draw_text(self, canvas, text, x, y, color, above=True):
+        """用 PIL 画中文标签（cv2.putText 不能渲染中文）。"""
+        if self._label_font is None:
+            cv2.putText(canvas, text.encode('ascii', 'replace').decode(),
+                        (max(0, int(x)), max(16, int(y))), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, color, 2, cv2.LINE_AA)
+            return
+        rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        image = PilImage.fromarray(rgb)
+        draw = ImageDraw.Draw(image)
+        if hasattr(draw, 'textbbox'):        # Pillow >= 8
+            left, top, right, bottom = draw.textbbox((0, 0), text, font=self._label_font)
+            width, height = right - left, bottom - top
+        else:                                # Jetson 上的 Pillow 7.0
+            width, height = draw.textsize(text, font=self._label_font)
+            left = top = 0
+        tx = max(0, min(int(x), canvas.shape[1] - width - 10))
+        ty = int(y) - height - 8 if above else int(y)
+        if ty < 0:
+            ty = max(0, int(y) + 2)
+        draw.rectangle([tx, ty, tx + width + 6, ty + height + 4], fill=(32, 32, 32))
+        draw.text((tx + 3 - left, ty + 2 - top), text, font=self._label_font,
+                  fill=(color[2], color[1], color[0]))
+        canvas[:] = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
 
     def _publish_preview(self, canvas, header):
         preview = self.bridge.cv2_to_imgmsg(canvas, encoding='bgr8')

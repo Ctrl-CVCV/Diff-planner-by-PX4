@@ -2,8 +2,8 @@
 
 The image sent to the VLM is always the outer rectangular frame. Afterward the
 published box differs: a sign uses the rectangle tangent to its triangle's
-three corners, and a portrait keeps the outermost frame. Frame color does not
-choose the VLM question, and the VLM is not called again.
+three corners, and a portrait keeps the outermost frame. The VLM is not called
+again, and the question still comes only from /yolo/enable.
 """
 import math
 
@@ -50,20 +50,17 @@ def _sign_outer_frame(image):
 
 
 def _enclosing_square(center, squares):
-    """Smallest square frame that contains the triangle center."""
+    """Outermost square frame that contains the triangle center."""
     cx, cy = center
     containing = [box for box in squares
                   if box[0] <= cx <= box[0] + box[2] and box[1] <= cy <= box[1] + box[3]]
     if not containing:
         return None
-    return min(containing, key=lambda box: box[2] * box[3])
+    return max(containing, key=lambda box: box[2] * box[3])
 
 
 def _square_boxes(image):
-    boxes = []
-    for color in ('red', 'blue'):
-        boxes.extend(list_square_frames(image, color))
-    return boxes
+    return list_square_frames(image)
 
 
 def recognition_crop(image, shape):
