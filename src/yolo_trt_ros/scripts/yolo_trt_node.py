@@ -19,7 +19,7 @@ import tensorrt as trt
 from cv_bridge import CvBridge
 from PIL import Image as PilImage, ImageDraw, ImageFont
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 _CUDART = ctypes.CDLL('libcudart.so')
 _CUDART.cudaMalloc.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t]
@@ -445,6 +445,9 @@ class YoloTrtNode(object):
         self.image_topic = rospy.get_param('~image_topic', '/usb_cam/image_raw')
         self.preview_topic = rospy.get_param('~preview_topic', '/yolo/preview/image')
         self.detections_topic = rospy.get_param('~detections_topic', '/yolo/detections')
+        # 识别总开关：std_msgs/Bool 话题，true=识别，false=暂停推理并发布空检测。
+        self.enable_topic = str(rospy.get_param('~enable_topic', '/yolo/enable'))
+        self.enabled = bool(rospy.get_param('~enabled_default', True))
         self.conf_thres = float(rospy.get_param('~conf_thres', 0.60))
         if not math.isfinite(self.conf_thres) or not 0.0 <= self.conf_thres <= 1.0:
             raise ValueError('conf_thres must be in [0, 1]')
@@ -560,6 +563,12 @@ class YoloTrtNode(object):
         self.image_sub = rospy.Subscriber(
             self.image_topic, Image, self._on_image, queue_size=1,
             buff_size=16 * 1024 * 1024)
+        self.enable_sub = rospy.Subscriber(
+            self.enable_topic, Bool, self._on_enable, queue_size=1)
+        # 关闭识别时仍然按 10 Hz 发布空检测，让任务的投票窗口及时清空，
+        # 而不是等到 max_age 过期。
+        self.disabled_timer = rospy.Timer(rospy.Duration(0.1),
+                                          self._publish_disabled)
         if self.display and not os.environ.get('DISPLAY'):
             rospy.logwarn('show_window is set but DISPLAY is empty; '
                           'preview window disabled')
@@ -577,6 +586,36 @@ class YoloTrtNode(object):
                       self.display_fps_target,
                       self.image_topic, self.detections_topic, self.preview_topic)
 
+    def _on_enable(self, message):
+        enabled = bool(message.data)
+        if enabled == self.enabled:
+            return
+        self.enabled = enabled
+        with self.frame_cond:
+            self.frame_queue.clear()
+            self._next_infer_time = None
+        if enabled:
+            rospy.logwarn('识别已启用：恢复推理')
+        else:
+            rospy.logwarn('识别已暂停（%s=false）：停止推理，发布空检测',
+                          self.enable_topic)
+
+    def _publish_disabled(self, _event):
+        if self.enabled:
+            return
+        payload = {
+            'stamp': rospy.Time.now().to_sec(),
+            'enabled': False,
+            'image_width': 0,
+            'image_height': 0,
+            'count': 0,
+            'detections': [],
+            'camera_fps': round(self.camera_fps, 2),
+        }
+        self.detections_pub.publish(
+            String(data=json.dumps(payload, ensure_ascii=False,
+                                   separators=(',', ':'))))
+
     def _on_image(self, message):
         now = time.monotonic()
         with self.frame_cond:
@@ -588,6 +627,8 @@ class YoloTrtNode(object):
                     self.camera_fps = (instant if self.camera_fps == 0.0
                                        else 0.9 * self.camera_fps + 0.1 * instant)
             self.last_frame_time = now
+            if not self.enabled:
+                return
             # Cap the rate of frames handed to inference (camera may run faster).
             if self._next_infer_time is not None and now < self._next_infer_time:
                 return
@@ -721,6 +762,7 @@ class YoloTrtNode(object):
         height, width = annotated.shape[:2]
         payload = {
             'stamp': message.header.stamp.to_sec(),
+            'enabled': True,
             'frame_id': message.header.frame_id,
             'sequence': slot.sequences[index],
             'image_width': int(width),

@@ -3,9 +3,10 @@
 
 /yolo/enable (std_msgs/Bool) is a one-shot trigger, not a level switch.
 false runs one danger-sign recognition. true runs one portrait recognition.
-The task comes from that message; border color does not choose the label.
-An accepted label is republished for about 4 seconds while OpenCV follows the
-target: a sign is boxed on its triangle, and a portrait on its blue square.
+That message alone chooses the VLM question. Border color is not consulted.
+The crop sent to the VLM is the outer rectangular frame. The published sign box
+is the rectangle tangent to the triangle's three corners. A portrait keeps its
+outermost frame. Either box is followed for about 4 seconds.
 非危险标志 and 不是人物头像 are published as class 1, 其它标识. The JSON on
 /yolo/detections uses the original YOLO fields.
 """
@@ -16,7 +17,6 @@ import threading
 import time
 
 import cv2
-import numpy as np
 import rospy
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
@@ -24,7 +24,7 @@ from std_msgs.msg import Bool, String
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vlm_client import VisionError, classify_frame
-from vlm_track import follow_target
+from vlm_track import follow_target, recognition_crop
 from vlm_recognition import (
     RecognitionHold, disabled_payload, enabled_payload, make_detection,
     should_call_vlm, yolo_class,
@@ -118,7 +118,16 @@ class VlmDetectorNode(object):
         if holding:
             detection = self._track(frame, hold, now)
         elif should_call_vlm(pending, busy, holding):
-            self._start_inference(frame, pending)
+            shape = 'triangle' if pending == 'sign' else 'square'
+            try:
+                crop = recognition_crop(frame, shape)
+            except (ValueError, cv2.error) as exc:
+                rospy.logwarn_throttle(5.0, 'recognition ROI failed: %s', exc)
+                crop = None
+            if crop is None:
+                rospy.loginfo_throttle(2.0, '等待画面中的外层矩形边框后再请求 VLM')
+            else:
+                self._start_inference(crop['image'], pending)
         with self.lock:
             if not self.hold.running(now) and not self.busy and self._pending is None:
                 self._active = False
@@ -195,21 +204,17 @@ class VlmDetectorNode(object):
             class_id, label = mapped
             self.hold.start(time.monotonic(), mode, class_id, label, elapsed_ms)
             rospy.loginfo('已确认%s，之后 %.1f 秒跟随%s', label, self.hold.seconds,
-                          '三角形边框' if self.hold.shape == 'triangle' else '正方形外框')
+                          '与三角形相切的矩形' if self.hold.shape == 'triangle' else '最外层边框')
 
     def _draw(self, frame, detection, hold, now):
         canvas = frame.copy()
         if detection is not None:
             color = _CLASS_COLORS[detection['class_id'] % len(_CLASS_COLORS)]
-            if hold is not None and hold.polygon:
-                cv2.polylines(canvas, [np.int32(hold.polygon)], True, color, 2)
-                anchor = hold.polygon[0]
-            else:
-                anchor = (int(round(detection['x1'])), int(round(detection['y1'])))
-                cv2.rectangle(
-                    canvas, anchor,
-                    (int(round(detection['x2'])), int(round(detection['y2']))),
-                    color, 2)
+            anchor = (int(round(detection['x1'])), int(round(detection['y1'])))
+            cv2.rectangle(
+                canvas, anchor,
+                (int(round(detection['x2'])), int(round(detection['y2']))),
+                color, 2)
             remaining = max(0.0, hold.until - now) if hold and hold.until else 0.0
             cv2.putText(canvas, '%s %.1fs' % (detection['label'], remaining),
                         (anchor[0], max(24, anchor[1] - 8)), cv2.FONT_HERSHEY_SIMPLEX,

@@ -71,6 +71,7 @@ class RosWorker(QtCore.QThread):
         self._node_poll = 0.0
         self._last_mission = ''
         self.rospy = None
+        self.enable_pub = None      # /yolo/enable（std_msgs/Bool），ROS 就绪后创建
 
     # ------------------------------------------------------------ helpers
     def _add_alert(self, level, text, node='monitor'):
@@ -215,7 +216,7 @@ class RosWorker(QtCore.QThread):
         from quadrotor_msgs.msg import Px4ctrlState
         from rosgraph_msgs.msg import Log
         from sensor_msgs.msg import Imu
-        from std_msgs.msg import String
+        from std_msgs.msg import Bool, String
 
         while not self._stop:
             try:
@@ -243,6 +244,7 @@ class RosWorker(QtCore.QThread):
             self._add_alert(level, message.msg.strip()[:200], message.name)
 
         rospy.Subscriber('/rosout', Log, rosout_cb, queue_size=100)
+        self.enable_pub = rospy.Publisher('/yolo/enable', Bool, queue_size=1)
 
         self.status_signal.emit(True, 'ROS 已连接，等待 /ekf/ekf_odom…')
         last_health = 0.0
@@ -259,6 +261,18 @@ class RosWorker(QtCore.QThread):
             rospy.signal_shutdown('gcs_console exit')
         except Exception:
             pass
+
+    def publish_enable(self, value):
+        """GUI 线程调用：向 /yolo/enable 发一条 Bool（VLM 单次触发）。"""
+        publisher = self.enable_pub
+        if publisher is None:
+            return False
+        try:
+            from std_msgs.msg import Bool
+            publisher.publish(Bool(data=bool(value)))
+            return True
+        except Exception:
+            return False
 
     def stop(self):
         self._stop = True
@@ -585,19 +599,51 @@ class Console(QtWidgets.QMainWindow):
         stop_all.clicked.connect(self.stop_control_stack)
         grid.addWidget(start_all, 0, 0)
         grid.addWidget(stop_all, 0, 1)
-        note = QtWidgets.QLabel('按 PX4Ctrl → Planner → YOLO → 舵机 顺序间隔启动')
+        note = QtWidgets.QLabel('按 PX4Ctrl → Planner → 视觉识别 → 舵机 顺序间隔启动')
         note.setStyleSheet('color: #777;')
         grid.addWidget(note, 0, 2, 1, 3)
         self._component(grid, 1, 'PX4Ctrl', 'px4ctrl', core.cmd_px4ctrl)
         self._component(grid, 2, 'Diff-Planner', 'planner', core.cmd_planner,
                         '只启动 run_exp_hybrid_mission.launch，不要重复启动单 LIO launch')
-        self.yolo_window = QtWidgets.QCheckBox('YOLO 显示窗口')
+        self.vision_backend = QtWidgets.QComboBox()
+        self.vision_backend.addItems(['VLM + OpenCV', 'TensorRT YOLO'])
+        self.vision_backend.setToolTip('VLM：/yolo/enable 单次触发；TensorRT YOLO：/yolo/enable 是电平开关')
+        self._component(grid, 3, '视觉识别', 'yolo',
+                        lambda: core.cmd_yolo(self.ws, self.yolo_window.isChecked(),
+                                              self.vision_backend.currentIndex() == 0))
+        grid.addWidget(QtWidgets.QLabel('识别方案'), 3, 4)
+        grid.addWidget(self.vision_backend, 3, 5)
+        self.yolo_window = QtWidgets.QCheckBox('显示识别窗口')
         self.yolo_window.setChecked(True)
-        grid.addWidget(self.yolo_window, 3, 3)
-        self._component(grid, 3, 'YOLO 视觉', 'yolo',
-                        lambda: core.cmd_yolo(self.ws, self.yolo_window.isChecked()))
-        self._component(grid, 4, '舵机控制', 'servo', core.cmd_servo,
+        grid.addWidget(self.yolo_window, 4, 4, 1, 2)
+        self._component(grid, 5, '舵机控制', 'servo', core.cmd_servo,
                         'payload_servos.launch：PWM_MAIN5..8，服务 /servo1../servo4，hold_s=2s 自动回位')
+        vision_hint = QtWidgets.QLabel(
+            'VLM 方案（默认）：每条 /yolo/enable 只识别一次，0=危险标志（C/D），1=人像（E/F/G）；'
+            'TensorRT YOLO 方案：/yolo/enable 是电平开关。两种方案节点名相同，切换前先停掉当前方案。')
+        vision_hint.setStyleSheet('color: #777;')
+        vision_hint.setWordWrap(True)
+        grid.addWidget(vision_hint, 6, 0, 1, 6)
+        layout.addWidget(group)
+
+        group, grid = self._group('VLM 单次识别（/yolo/enable）')
+        self.vlm_danger_btn = QtWidgets.QPushButton('危险标志（C/D 点）→ 0')
+        self.vlm_person_btn = QtWidgets.QPushButton('人像（E/F/G 点）→ 1')
+        self.vlm_danger_btn.clicked.connect(lambda: self.trigger_vlm(core.VLM_MODE_DANGER))
+        self.vlm_person_btn.clicked.connect(lambda: self.trigger_vlm(core.VLM_MODE_PERSON))
+        grid.addWidget(self.vlm_danger_btn, 0, 0, 1, 2)
+        grid.addWidget(self.vlm_person_btn, 0, 2, 1, 2)
+        self.vlm_state = QtWidgets.QLabel('等待触发；识别节点启动后，每点一次识别一次')
+        self.vlm_state.setStyleSheet('color: #555;')
+        grid.addWidget(self.vlm_state, 1, 0, 1, 4)
+        vlm_hint = QtWidgets.QLabel(
+            '仅 VLM 方案有效：每条消息触发一次识别（约 5 s），确认后按 /yolo/detections 发布约 4 s。'
+            '切到 TensorRT YOLO 时这两个按钮禁用。')
+        vlm_hint.setStyleSheet('color: #777;')
+        vlm_hint.setWordWrap(True)
+        grid.addWidget(vlm_hint, 2, 0, 1, 4)
+        self.vision_backend.currentIndexChanged.connect(self.on_vision_backend_changed)
+        self.on_vision_backend_changed(self.vision_backend.currentIndex())
         layout.addWidget(group)
 
         group, grid = self._group('任务脚本（独立入口）')
@@ -763,13 +809,43 @@ class Console(QtWidgets.QMainWindow):
         if stop is not None:
             stop.setEnabled(running)
 
+    def vision_is_vlm(self):
+        return self.vision_backend.currentIndex() == 0
+
+    def on_vision_backend_changed(self, index):
+        is_vlm = index == 0
+        for button in (getattr(self, 'vlm_danger_btn', None),
+                       getattr(self, 'vlm_person_btn', None)):
+            if button is not None:
+                button.setEnabled(is_vlm)
+        state = getattr(self, 'vlm_state', None)
+        if state is not None and not is_vlm:
+            state.setText('当前为 TensorRT YOLO：/yolo/enable 是电平开关，不用这两个按钮')
+
+    def trigger_vlm(self, mode):
+        label = '危险标志（C/D）' if mode == core.VLM_MODE_DANGER else '人像（E/F/G）'
+        if not self.vision_is_vlm():
+            self.append_log('vlm', '当前识别方案是 TensorRT YOLO，未发送（/yolo/enable 是电平开关）\n')
+            return
+        published = self.ros.publish_enable(core.vlm_enable_value(mode))
+        if published:
+            self.append_log('vlm', '已发送 /yolo/enable=%d（%s）\n' % (mode, label))
+        else:
+            self.processes.start('vlm_trigger', core.cmd_vlm_trigger(mode))
+            self.append_log('vlm', 'ROS 线程未就绪，改用 rostopic 发布 %s\n' % label)
+        if not self.ros.nodes.get('yolo'):
+            self.append_log('vlm', '提示：/yolo_trt_detector 未运行，这条消息没有接收者\n')
+        self.vlm_state.setText('最近触发：%s（%d）' % (label, mode))
+        self.vlm_state.setStyleSheet('color: #2a7;')
+
     def start_control_stack(self):
-        self.append_log('console', '一键启动：PX4Ctrl → Diff-Planner → YOLO → 舵机\n')
+        self.append_log('console', '一键启动：PX4Ctrl → Diff-Planner → 视觉识别 → 舵机\n')
         self.processes.start('px4ctrl', core.cmd_px4ctrl(self.ws))
         QtCore.QTimer.singleShot(1200, lambda: self.processes.start(
             'planner', core.cmd_planner(self.ws)))
         QtCore.QTimer.singleShot(2400, lambda: self.processes.start(
-            'yolo', core.cmd_yolo(self.ws, self.yolo_window.isChecked())))
+            'yolo', core.cmd_yolo(self.ws, self.yolo_window.isChecked(),
+                                  self.vision_backend.currentIndex() == 0)))
         QtCore.QTimer.singleShot(3600, lambda: self.processes.start(
             'servo', core.cmd_servo(self.ws)))
 

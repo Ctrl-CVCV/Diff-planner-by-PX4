@@ -566,11 +566,36 @@ rescue_drop:
 即 `cy` 必须在 `0.25H–0.75H` 之间；悬停时相机画面里"前面一个格子"的目标常出现在
 上/下边缘，不再参与判定，避免误触发投放。比例按现场画面调整（单项限制 0–0.45）。
 
+**识别触发（2026-11-24 更新）**：当前 `yolo_trt.launch` 启动的是 VLM 版本
+`vlm_detector_node.py`（节点名仍是 `yolo_trt_detector`，`/yolo/detections` 的 JSON 字段不变），
+`/yolo/enable`（`std_msgs/Bool`）在这里是**单次触发**，不是电平开关：
+
+- `false`：调用一次 VLM，问"画面里是不是危险标志"；
+- `true`：调用一次 VLM，问"画面里是不是人物头像"。
+
+```bash
+rostopic pub -1 /yolo/enable std_msgs/Bool "data: false"   # 识别一次危险品
+rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"    # 识别一次救助人员
+```
+
+送给 VLM 的是外层矩形边框，不是整帧。发布时，危险标志的矩形与三角形三个角相切，
+人像圈最外层边框。确认后按原格式发布约 4 s（`~hold_seconds`），并由 OpenCV 跟随这个矩形。
+结果为「其它标识」时任务立即飞往下一点；还没有结果或请求失败时，最多等到 `wait_timeout`
+（15 s）再走。
+
+**任务执行时触发是自动的**：到达需要识别的航点、开始稳定悬停计时的那一刻，任务脚本自己
+发一次 `/yolo/enable`（C/D 发 `false`，E/F/G 发 `true`，`request_recognition()`），同一航点
+不重复触发。GUI 的两个触发按钮用于不跑任务时的地面/悬停测试。
+旧的 TensorRT 节点 `yolo_trt_node.py` 仍保留"电平开关"语义（`false` 停推理、`true` 恢复），
+当前 launch 用 `use_vlm:=false` 启动它，两者不能同时运行（节点名相同）。
+
 ## 12. 救援物资投放（默认仍为 dry_run 测试）
 
 `rescue_drop/enabled: true`、`rescue_drop/dry_run: true`（临时关闭用 `--no-rescue-drop`）。
 默认在 **E、F、G** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
-`detection` 段投票窗口（默认 time/0.5s，可设 frames 帧数窗）+ `max_age`）。
+`detection` 段确认方式 + `max_age`）。2026-11-25 起 `detection/vote_mode: none`：
+**最近一帧命中即确认**（VLM 每次触发只有一个判定，再投票没有额外信息）；
+换回 TensorRT YOLO 时改回 `time` 或 `frames`，否则单帧误检会直接触发投放。
 `once: false`：三个点各自独立判断。
 
 当前阶段的 `dry_run: true` 只降到离地 `height`、保持 `push_wait`、再爬回，不调用舵机；

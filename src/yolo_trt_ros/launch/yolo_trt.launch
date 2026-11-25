@@ -2,7 +2,7 @@
   <arg name="device" default="/dev/video0"/>
   <arg name="width" default="640"/>
   <arg name="height" default="480"/>
-  <arg name="fps" default="60.0"/>
+  <arg name="fps" default="30.0"/>
   <arg name="fourcc" default="MJPG"/>
   <arg name="buffer_size" default="2"/>
   <arg name="frame_id" default="camera_optical_frame"/>
@@ -26,6 +26,9 @@
   <!--单次触发：std_msgs/Bool。false=识别一次危险品，true=识别一次人像。-->
   <arg name="enable_topic" default="/yolo/enable"/>
   <arg name="enabled_default" default="false"/>
+  <!-- 识别方案：true = VLM + OpenCV（单次触发），false = TensorRT YOLO（电平开关）。
+       两种方案的节点名、话题和检测 JSON 相同，不会同时启动。 -->
+  <arg name="use_vlm" default="true"/>
 
   <include file="$(find yolo_trt_ros)/launch/camera.launch">
     <arg name="device" value="$(arg device)"/>
@@ -38,12 +41,14 @@
     <arg name="image_topic" value="$(arg image_topic)"/>
   </include>
 
-  <!-- 本分支用 VLM 替换 TensorRT YOLO。话题和检测 JSON 保持不变。
-       /yolo/enable 每来一条消息只识别一次：false 认危险品，true 认人像。
-       确认后约 4 秒由 OpenCV 跟随：标志框三角形边框，人像框蓝色正方形外框。
-       类别由这条消息决定，不靠边框颜色。enabled_default 不再自动开始识别。
-       engine_path / label_names 仍可从命令行传入，识别不再读取它们。 -->
-  <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen">
+  <!-- VLM + OpenCV 方案（use_vlm:=true，默认）。
+       /yolo/enable 每来一条消息只识别一次：false=危险标志（C/D 点），true=人像（E/F/G 点）。
+       识别类型只由 /yolo/enable 决定，不看边框颜色。
+       送给 VLM 的都是外层矩形边框。发布时，标志的矩形与三角形三个角相切，人像圈最外层边框。
+       确认后约 4 秒由 OpenCV 跟随这个输出矩形。
+       enabled_default 不再自动开始识别；engine_path / label_names 不参与识别。 -->
+  <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen"
+        if="$(arg use_vlm)">
     <env name="PYTHONNOUSERSITE" value="1"/>
     <param name="image_topic" value="$(arg image_topic)" type="str"/>
     <param name="show_window" value="$(arg show_window)" type="bool"/>
@@ -54,5 +59,24 @@
     <param name="endpoint" value="$(arg endpoint)" type="str"/>
     <param name="model" value="$(arg model)" type="str"/>
     <param name="hold_seconds" value="$(arg hold_seconds)" type="double"/>
+  </node>
+
+  <!-- TensorRT YOLO 方案（use_vlm:=false）。/yolo/enable 在这里是电平开关：
+       false 停止推理并发布空检测，true 恢复推理。参数取自 config/yolo_trt.yaml。 -->
+  <node pkg="yolo_trt_ros" type="yolo_trt_node.py" name="yolo_trt_detector" output="screen"
+        unless="$(arg use_vlm)">
+    <env name="PYTHONNOUSERSITE" value="1"/>
+    <rosparam command="load" file="$(find yolo_trt_ros)/config/yolo_trt.yaml"/>
+    <param name="engine_path" value="$(arg engine_path)" type="str"/>
+    <param name="label_names" value="$(arg label_names)" type="str"/>
+    <param name="image_topic" value="$(arg image_topic)" type="str"/>
+    <param name="show_window" value="$(arg show_window)" type="bool"/>
+    <param name="window_name" value="YOLO TensorRT" type="str"/>
+    <param name="window_width" value="$(arg window_width)" type="int"/>
+    <param name="window_height" value="$(arg window_height)" type="int"/>
+    <param name="preview_topic" value="$(arg preview_topic)" type="str"/>
+    <param name="detections_topic" value="$(arg detections_topic)" type="str"/>
+    <param name="enable_topic" value="$(arg enable_topic)" type="str"/>
+    <param name="enabled_default" value="true" type="bool"/>
   </node>
 </launch>

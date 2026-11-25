@@ -124,6 +124,28 @@ class CommandsTest(unittest.TestCase):
         self.assertIn('show_window:=false', core.cmd_yolo(show_window=False))
         self.assertNotIn('show_window:=false', core.cmd_yolo(show_window=True))
 
+    def test_yolo_backend_flag(self):
+        self.assertNotIn('use_vlm:=false', core.cmd_yolo(use_vlm=True))
+        self.assertIn('use_vlm:=false', core.cmd_yolo(use_vlm=False))
+        both = core.cmd_yolo(show_window=False, use_vlm=False)
+        self.assertIn('show_window:=false', both)
+        self.assertIn('use_vlm:=false', both)
+
+    def test_vlm_mode_values(self):
+        self.assertFalse(core.vlm_enable_value(core.VLM_MODE_DANGER))
+        self.assertTrue(core.vlm_enable_value(core.VLM_MODE_PERSON))
+        self.assertEqual((core.VLM_MODE_DANGER, core.VLM_MODE_PERSON), (0, 1))
+        with self.assertRaises(ValueError):
+            core.vlm_enable_value(2)
+
+    def test_vlm_trigger_command(self):
+        danger = core.cmd_vlm_trigger(core.VLM_MODE_DANGER)
+        portrait = core.cmd_vlm_trigger(core.VLM_MODE_PERSON)
+        self.assertIn('/yolo/enable', danger)
+        self.assertIn('std_msgs/Bool', danger)
+        self.assertIn('data: false', danger)
+        self.assertIn('data: true', portrait)
+
     def test_mission_flags(self):
         argv = core.mission_argv(execute=True, map_verified=True, direct_verified=True,
                                  no_hazard=True, no_rescue=False)

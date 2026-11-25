@@ -23,9 +23,9 @@ rescue_drop:
   points: [E, F, G]
   label: 救助人员
   min_confidence: 0.70
-  # 投票参数默认取 detection 段：vote_mode/vote_window/vote_frames/vote_ratio
+  # 确认方式默认取 detection 段：当前 vote_mode: none（最近一帧命中即确认，VLM 用）
   hover_seconds: 3.0
-  wait_timeout: 10.0
+  wait_timeout: 15.0
   height: 0.15         # 离该点地面的高度
   speed: 0.15
   tolerance: 0.02
@@ -143,12 +143,15 @@ rostopic echo /drone_0_mission/state
 | 时间 | 行为 |
 | --- | --- |
 | 0–3 s | 到点稳定悬停（`mission/arrival_dwell`） |
-| 3 s 起 | 检查投票；已确认目标 → `DROP_DESCEND` |
+| 3 s 起 | 检查检测结果；最近一帧命中即确认 → `DROP_DESCEND` |
 | 3–11 s | 以 ≤0.15 m/s 从航点高度降到离地 0.15 m（约 0.65 m 高度差，参考时长约 8 s） |
 | +2.5 s | `DROP_PUSH`：低空保持，**测试模式不调用任何舵机** |
 | 约 8 s | `DROP_ASCEND` 爬回航点高度，继续飞往下一点 |
 
-未确认目标时：从到点起最多等 `wait_timeout`（10 s），然后按原任务流飞走，不下降。
+未确认目标时：从到点起最多等 `wait_timeout`（15 s），然后按原任务流飞走，不下降。
+识别为「其它标识」时不等满 15 s，直接飞往下一点。
+`--execute` 模式下任务脚本到点会自动发 `/yolo/enable`（C/D=false，E/F/G=true），不用人工点；
+手工/悬停测试时才需要自己触发。送给 VLM 的是外层矩形边框。
 
 日志关键字：
 
@@ -267,8 +270,8 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | 临时关闭救援测试 | 命令行加 `--no-rescue-drop` | 不订阅检测、不降高度 |
 | 正式投放（以后） | `rescue_drop/dry_run: false` | 测试通过后再改 |
 | 哪些点允许触发 | `rescue_drop/points` | 只允许 E/F/G |
-| 检测灵敏度 | `min_confidence` / `detection/vote_*` | 误检多就提高门槛或投票比例 |
-| 检测等待时间 | `rescue_drop/wait_timeout` | 默认 10 s，到点后等这么久 |
+| 检测灵敏度 | `min_confidence` / `detection/vote_*` | 当前 `vote_mode: none`（单帧确认）；用 YOLO 时改回 `time`/`frames` 抑制误检 |
+| 检测等待时间 | `rescue_drop/wait_timeout` | 默认 15 s；「其它标识」不等满就飞往下一点 |
 | 下降高度 | `rescue_drop/height` | 相对该点地面 |
 | 下降速度 | `rescue_drop/speed` | 不得大于 `direct/max_speed`（0.20） |
 | 低空保持 | `rescue_drop/push_wait` | 测试模式下同样保持，用来模拟投放时长 |
@@ -280,12 +283,12 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | --- | --- | --- |
 | E/F/G 完全不下降 | YOLO 没运行 / 标签不是"救助人员" / 置信度不足 | `rostopic hz /yolo/detections`，核对 label 与 confidence |
 | 画面里有目标但不触发 | 离图像中心最近的是别的类别（比如"其它标识"），中心目标才参与判定 | 让目标位于画面中央，或调整悬停位置 |
-| 只悬停不下降，10 s 后飞走 | 投票未达 `vote_ratio`，或检测断更超 `max_age` | 看日志"命中 x 帧"；检查 YOLO 帧率/延迟 |
+| 只悬停不下降，15 s 后飞走 | VLM 没出结果或请求失败，或检测断更超 `max_age` | 看任务日志与 `/yolo/detections`；「其它标识」会立刻飞走 |
 | 预检报 `/servo3/push` 不可用 | `hazard_drop` 仍启用 | 加 `--no-hazard-drop`（本轮不测危险品时） |
 | 预检报航点未实测 | `measured: false` | 实测后改 `true`，不要为了跑通删标记 |
 | 下降高度看起来不对 | `height` 与 `z_offset` 混淆 | `height` 是离地高度，`z_offset` 是地面高差 |
 | 填 0.7 报配置错误 | 超过 ±0.30 上限 | 确认单位是米、正负号含义 |
-| 每点多等 10 s | `wait_timeout` 默认值 | 测试阶段可接受；不想等就关 `--no-rescue-drop` |
+| 每点多等 15 s | 没有识别结果时的 `wait_timeout` | 测试阶段可接受；不想等就关 `--no-rescue-drop` |
 
 ## 8. 安全与限制
 
@@ -294,6 +297,6 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 - 该功能只有离线单元测试（`tests/test_hybrid_mission.py` 的
   `RescueDropAndGroundOffsetTest`），**没有实飞验证**；第一次建议单独飞一轮，
   不要和危险品投放测试混在一起。
-- 默认开启会让 E/F/G 每点多等最多 10 s；比赛正式跑之前根据实测效果决定是否常开。
+- 默认开启会让 E/F/G 在没有识别结果时每点多等最多 15 s；比赛正式跑之前根据实测效果决定是否常开。
 - `z_offset` 有 ±0.30 m 的硬上限，是用来修正地面高差的，不是用来改变飞行高度的；
   要改整体飞行高度请改航点 `xyz` 的 z。

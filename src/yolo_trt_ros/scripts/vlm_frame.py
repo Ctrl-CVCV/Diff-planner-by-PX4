@@ -1,4 +1,8 @@
-"""Find the red sign frame or the blue portrait frame in a camera image."""
+"""Find a red or blue square frame in a camera image.
+
+The color only locates the frame. It does not decide whether the VLM is asked
+about a sign or a portrait; /yolo/enable does that.
+"""
 import cv2
 import numpy as np
 

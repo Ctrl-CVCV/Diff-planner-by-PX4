@@ -96,6 +96,8 @@ def vote_raw_config(config, section):
 
 
 def vote_text(mode, window, frames, ratio):
+    if mode == 'none':
+        return '最近一帧命中即确认（VLM 单次判定，不做投票）'
     if mode == 'time':
         return '最近 %.1fs 内至少 %d 票、命中比例 ≥%.0f%%' % (window, frames, ratio * 100.0)
     return '最近 %d 帧里命中比例 ≥%.0f%%' % (frames, ratio * 100.0)
@@ -275,6 +277,9 @@ class Mission:
         self.hazard_last = None
         self.rescue_votes = deque()
         self.rescue_last = None
+        # 当前航点最近一帧的结论：(航点, 时刻, 'hit'|'other'|'miss')。
+        # 其它标识只对触发识别的那个航点生效，避免上一点的结果带到下一点。
+        self._point_outcomes = {}
         self.drop_done = False
         self.rescue_done = set()
         self.rescue_index = 0    # 下一个要投放的救援物资序号（对应 rescue_drop/payloads）
@@ -643,7 +648,7 @@ class Mission:
                       vote_frames=vote_setting('vote_frames', 15),
                       vote_ratio=vote_setting('vote_ratio', 0.60),
                       hover_seconds=settings.get('hover_seconds', 3.0),
-                      wait_timeout=settings.get('wait_timeout', 10.0),
+                      wait_timeout=settings.get('wait_timeout', 15.0),
                       height=settings.get('height', 0.15),
                       speed=settings.get('speed', 0.15),
                       tolerance=settings.get('tolerance', 0.02),
@@ -676,8 +681,10 @@ class Mission:
             raise FlightError(section + '/min_confidence 必须位于 (0, 1]')
         if not 0.0 < values['vote_ratio'] <= 1.0:
             raise FlightError(section + '/vote_ratio 必须位于 (0, 1]')
-        if not isinstance(values['vote_mode'], str) or values['vote_mode'] not in ('time', 'frames'):
-            raise FlightError('%s/vote_mode 必须是 time（时间窗）或 frames（帧数窗）' % section)
+        if (not isinstance(values['vote_mode'], str)
+                or values['vote_mode'] not in ('time', 'frames', 'none')):
+            raise FlightError('%s/vote_mode 必须是 time（时间窗）、frames（帧数窗）或 none'
+                              '（单帧确认，仅建议用于 VLM）' % section)
         if values['height'] <= 0 or values['height'] >= self.config['takeoff']['height']:
             raise FlightError(section + '/height 必须大于 0 且小于 takeoff/height')
         if values['speed'] > self.config['direct']['max_speed']:
@@ -712,11 +719,15 @@ class Mission:
             return None
 
     def frame_hit(self, message, settings, default_label='危险品'):
-        """单帧判定：画面里可能有多个图案，只认离图像中心最近的那一个。
+        """单帧是否命中本航点要找的标签。"""
+        return self.frame_outcome(message, settings, default_label) == 'hit'
 
-        无人机悬停在目标正上方，所以中心目标才是投放对象；边缘的相似框（别的
-        目标、误检）不参与判定。选中后还要看它的类别与置信度。坏消息/空帧
-        按"未命中"参与投票。缺图像尺寸或框坐标时退化为"任一命中即算命中"。
+    def frame_outcome(self, message, settings, default_label='危险品'):
+        """单帧结论：'hit' 命中投放标签，'other' 是其它标识，'miss' 还没有可用结论。
+
+        画面里可能有多个图案，只认离图像中心最近的那一个。无人机悬停在目标正上方，
+        所以中心目标才是投放对象；边缘框不参与判定。坏消息和空帧是 miss。
+        缺图像尺寸或框坐标时，任一框命中即算 hit，出现其它标识则算 other。
         """
         label = str(settings.get('label', default_label)).strip()
         try:
@@ -726,9 +737,9 @@ class Mission:
         try:
             payload = json.loads(message.data)
         except (TypeError, ValueError, AttributeError):
-            return False
+            return 'miss'
         if not isinstance(payload, dict):
-            return False
+            return 'miss'
         candidates = []
         for detection in payload.get('detections') or []:
             if not isinstance(detection, dict):
@@ -739,7 +750,7 @@ class Mission:
                 continue
             candidates.append((self.box_center(detection), text, confidence))
         if not candidates:
-            return False
+            return 'miss'
         try:
             width = float(payload.get('image_width') or 0.0)
             height = float(payload.get('image_height') or 0.0)
@@ -755,13 +766,18 @@ class Mission:
             lower = height * (1.0 - bottom_ratio)
             located = [item for item in located if upper <= item[0][1] <= lower]
             if not located:
-                return False
+                return 'miss'
             cx, cy = width / 2.0, height / 2.0
             _, text, confidence = min(
                 located, key=lambda item: math.hypot(item[0][0] - cx, item[0][1] - cy))
-            return label in text and confidence >= threshold
-        return any(label in text and confidence >= threshold
-                   for _, text, confidence in candidates)
+            texts = ((text, confidence),)
+        else:
+            texts = tuple((text, confidence) for _, text, confidence in candidates)
+        if any(label in text and confidence >= threshold for text, confidence in texts):
+            return 'hit'
+        if any(text == '其它标识' for text, _confidence in texts):
+            return 'other'
+        return 'miss'
 
     def detection_band(self):
         """有效检测的纵向区域：排除图像最上方/最下方各一段。
@@ -800,7 +816,7 @@ class Mission:
         return votes
 
     def vote_params(self, section):
-        """该投放段的投票参数（time=时间窗 / frames=帧数窗）；坏配置按默认值处理。"""
+        """该投放段的投票参数（time=时间窗 / frames=帧数窗 / none=单帧确认）；坏配置按默认值处理。"""
         mode, window, frames, ratio = vote_raw_config(self.config, section)
         try:
             mode = str(mode)
@@ -809,7 +825,7 @@ class Mission:
             ratio = float(ratio)
         except (TypeError, ValueError):
             return dict(vote_mode='frames', vote_window=0.5, vote_frames=15, vote_ratio=0.60)
-        if mode not in ('time', 'frames'):
+        if mode not in ('time', 'frames', 'none'):
             mode = 'frames'
         if not math.isfinite(window) or window <= 0.0:
             window = 0.5
@@ -831,14 +847,25 @@ class Mission:
             if not settings.get('enabled', False):
                 continue
             votes = self.vote_buffer(section)
-            votes.append((now, self.frame_hit(
-                message, settings, '危险品' if section == 'hazard_drop' else '救助人员')))
+            outcome = self.frame_outcome(
+                message, settings, '危险品' if section == 'hazard_drop' else '救助人员')
+            votes.append((now, outcome == 'hit'))
+            point = getattr(self, '_recognition_point', None)
+            if point is not None:
+                outcomes = getattr(self, '_point_outcomes', None)
+                if outcomes is None:
+                    outcomes = self._point_outcomes = {}
+                outcomes[section] = (point, now, outcome)
             params = self.vote_params(section)
             if params['vote_mode'] == 'time':
                 cutoff = now - params['vote_window']
                 while votes and votes[0][0] < cutoff:
                     del votes[0]
                 while len(votes) > _VOTE_HISTORY_LIMIT:
+                    del votes[0]
+            elif params['vote_mode'] == 'none':
+                # 单帧确认只看最新一帧，队列不需要保留历史。
+                while len(votes) > 1:
                     del votes[0]
             else:
                 while len(votes) > params['vote_frames']:
@@ -854,6 +881,10 @@ class Mission:
         votes = votes or ()
         if last is None or now - last > values['max_age']:
             return False
+        if values.get('vote_mode', 'frames') == 'none':
+            # VLM 每触发一次只给一个判定，OpenCV 跟随期间重复发布同一结论；
+            # 再做投票没有额外信息，只按最近一帧（仍受 max_age 约束）。
+            return bool(votes) and bool(votes[-1][1])
         if values.get('vote_mode', 'frames') == 'time':
             cutoff = now - values['vote_window']
             votes = [item for item in votes if item[0] >= cutoff]
@@ -939,6 +970,11 @@ class Mission:
             return 'continue'
         if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
             return 'continue'
+        recorded = getattr(self, '_point_outcomes', {}).get(section)
+        if (recorded and recorded[0] == point and recorded[2] == 'other'
+                and now - recorded[1] <= values['max_age']):
+            self.ros.loginfo('%s 点识别为其它标识，不投放，直接飞往下一航点', point)
+            return 'continue'
         if now - settled_since < values['hover_seconds']:
             return 'wait'
         if self.plan_votes_stable(section, now, values):
@@ -946,7 +982,7 @@ class Mission:
         if now - settled_since >= values['wait_timeout']:
             votes = self.vote_buffer(section)
             hits = sum(1 for _, hit in votes if hit)
-            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：投票队列 %d 票中命中 %d 票'
+            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：检测样本 %d 条中命中 %d 条'
                              '（需要 %s、置信度 ≥%.2f），不投放，继续任务',
                              point, now - settled_since, values['label'], len(votes), hits,
                              self.vote_window_text(values), values['min_confidence'])
@@ -1876,7 +1912,7 @@ def main(argv=None):
               % ('/'.join(drop.get('points', ['C', 'D'])), drop.get('hover_seconds', 3.0),
                  vote_text(mode, window, frames, ratio),
                  drop.get('label', '危险品'), drop.get('min_confidence', 0.70),
-                 drop.get('height', 0.15), actions, drop.get('wait_timeout', 10.0)))
+                 drop.get('height', 0.15), actions, drop.get('wait_timeout', 15.0)))
     else:
         print('危险品投放未启用（hazard_drop/enabled=false）：不调用舵机。')
     rescue = config.get('rescue_drop') or {}

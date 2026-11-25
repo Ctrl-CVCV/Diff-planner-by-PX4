@@ -1141,6 +1141,22 @@ class HazardDrop(unittest.TestCase):
         self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
         self.assertEqual(runner.stage, 'LANDING')
 
+    def test_other_label_leaves_without_waiting_out_the_timeout(self):
+        runner = self.runner
+        other = dict(label='其它标识', confidence=1.0, class_id=1, cx=320.0, cy=240.0,
+                     x1=280.0, y1=200.0, x2=360.0, y2=280.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            runner._recognition_point = 'C'
+            self.feed([other])
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', self.clock.now),
+                             'continue')
+            # 上一点的其它标识不能让下一个航点跳过自己的识别。
+            self.assertEqual(runner.plan_decision(self.clock.now, 'D', self.clock.now),
+                             'wait')
+            self.feed([])
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', self.clock.now),
+                             'wait')
+
     def test_no_detection_waits_then_continues_without_dropping(self):
         runner, clock = self.runner, self.clock
         self.enable_drop()
@@ -1188,8 +1204,20 @@ class HazardDrop(unittest.TestCase):
             runner.receive(SimpleNamespace(data='not json'), 'detections')
             self.assertFalse(self.last_vote(), '坏消息按未检测处理')
 
-            # 时间窗投票：窗口内票数不足不确认；比例不足不确认；达标才确认。
-            self.assertEqual(values['vote_mode'], 'time', '默认应为时间窗投票')
+            # 默认 none（VLM 单次确认）：最近一帧命中即确认，未命中/断更不确认。
+            self.assertEqual(values['vote_mode'], 'none', '默认应为 VLM 单次确认')
+            runner.hazard_votes.clear()
+            self.feed([centered])
+            self.assertTrue(runner.hazard_stable(self.clock.now, values), '最近一帧命中即确认')
+            self.feed([person])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '最近一帧未命中不能确认')
+            self.assertFalse(runner.hazard_stable(self.clock.now + values['max_age'] * 2.0, values),
+                             '检测断更不能确认')
+
+            # 切回时间窗投票：窗口内票数不足不确认；比例不足不确认；达标才确认。
+            runner.config['detection']['vote_mode'] = 'time'
+            runner.config['detection']['vote_frames'] = 5
+            values = runner.drop_settings()
             frames = values['vote_frames']
             runner.hazard_votes.clear()
             for _ in range(frames - 1):

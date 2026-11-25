@@ -63,10 +63,25 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 | --- | --- |
 | PX4Ctrl | `roslaunch px4ctrl run_ctrl_lio.launch` |
 | Diff-Planner | `roslaunch diff_planner run_exp_hybrid_mission.launch` |
-| YOLO 视觉 | `roslaunch yolo_trt_ros yolo_trt.launch`（默认显示窗口，可取消勾选加 `show_window:=false`） |
+| 视觉识别 | `roslaunch yolo_trt_ros yolo_trt.launch`；方案由右侧下拉框选择：**VLM + OpenCV**（默认，`use_vlm:=true`）或 **TensorRT YOLO**（`use_vlm:=false`）；可取消勾选显示窗口 |
 | 舵机控制 | `roslaunch px4_servo payload_servos.launch`（PWM_MAIN5..8，四路物资舵机，hold_s=2 s 自动回位） |
 
-「一键启动全部」按 PX4Ctrl → Planner → YOLO → 舵机 顺序间隔启动；「一键停止全部」逆序停止。
+「一键启动全部」按 PX4Ctrl → Planner → 视觉识别 → 舵机 顺序间隔启动；「一键停止全部」逆序停止。
+
+**识别方案与 VLM 触发（2026-11-25）**
+
+- 下拉框「识别方案」在点「视觉识别」启动时生效：`VLM + OpenCV` 或 `TensorRT YOLO`。
+  两种方案的节点名（`/yolo_trt_detector`）、话题和检测 JSON 都相同，**切换前先停掉当前方案**，
+  不要同时启动。
+- VLM 模式下，下方「VLM 单次识别（/yolo/enable）」组提供两个按钮：
+  - **危险标志（C/D 点）→ 0**：发 `/yolo/enable = false`，识别一次危险标志；
+  - **人像（E/F/G 点）→ 1**：发 `/yolo/enable = true`，识别一次人像。
+  每点一次只识别一次。送给模型的是外层矩形边框，确认后按原格式发布约 4 s。
+  **跑 `--execute` 任务时不需要点**：任务脚本到点会自己发这一条；按钮用于地面/悬停测试。
+- TensorRT YOLO 模式下 `/yolo/enable` 是**电平开关**（`false` 停推理并发布空检测，`true`
+  恢复），两个触发按钮会自动禁用，避免把单次触发当成开关误用。
+- 触发按钮通过界面自带的 ROS 线程直接发布 `/yolo/enable`（`std_msgs/Bool`）；ROS 未连接时
+  回退为 `rostopic pub -1`。识别节点没在运行时，界面日志会提示"消息没有接收者"。
 
 ### 2.3 任务脚本（独立入口）
 

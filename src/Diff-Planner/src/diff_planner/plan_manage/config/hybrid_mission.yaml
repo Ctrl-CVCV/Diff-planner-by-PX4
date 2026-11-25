@@ -67,14 +67,18 @@ landing:
 detection:
   exclude_top_ratio: 0.25
   exclude_bottom_ratio: 0.25
-  # 目标确认投票（危险品/救援共用；各投放段内写同名键可单独覆盖）：
-  #   vote_mode: time   = 时间窗投票：最近 vote_window 秒内的命中比例；
+  # 目标确认方式（危险品/救援共用；各投放段内写同名键可单独覆盖）：
+  #   vote_mode: none   = 最近一帧命中即确认（2026-11-25 起默认，VLM 方案用）；
+  #              time   = 时间窗投票：最近 vote_window 秒内的命中比例；
   #              frames = 帧数窗投票：最近 vote_frames 帧的命中比例。
+  #   none 的理由：VLM 每次触发只产生一个判定，OpenCV 跟随期间重复发布同一结论，
+  #   再投票没有额外信息；max_age 仍然保证检测是新鲜的。
+  #   注意：换回 TensorRT YOLO 时应改回 time/frames——YOLO 是逐帧识别，单帧确认会
+  #   放大误检（2026-11 曾出现边缘目标误触发）。
   #   vote_window: 时间窗宽度（秒），仅 time 模式生效。
   #   vote_frames: frames 模式=窗口帧数；time 模式=窗口内最少投票数。
-  #   vote_ratio:  两种模式共用的命中比例阈值。
-  # 时间窗与识别帧率解耦；识别帧率在 yolo_trt_ros/config/yolo_trt.yaml（infer_fps: 20）配置。
-  vote_mode: time
+  #   vote_ratio:  time/frames 共用的命中比例阈值。
+  vote_mode: none
   vote_window: 0.5
   vote_frames: 5
   vote_ratio: 0.60
@@ -103,7 +107,10 @@ hazard_drop:
   # 再判它是不是 label、置信度够不够。是否确认真危险品由 detection 段的投票窗口决定；
   # 需要单独覆盖时在本段写 vote_mode/vote_window/vote_frames/vote_ratio 同名键。
   hover_seconds: 3.0        # 到点后连续稳定悬停多久才允许下降（与 arrival_dwell 一致）
-  wait_timeout: 10.0        # 到点后最多等多久检测；超时告警并按原任务流继续
+  # 到点后最多等多久检测；超时告警并按原任务流继续。
+  # 2026-11-25：8.0 → 15.0。VLM 单次识别约 5–7.5 s，确认后连续发布约 4 s；
+  # 15 s 只留给“还没有结果”或请求失败。识别为其它标识时立即飞往下一点。
+  wait_timeout: 15.0
   height: 0.15              # 下降到离地高度（米，相对起飞原点）
   speed: 0.15               # 下降/爬升速度上限；不得大于 direct/max_speed
   tolerance: 0.02           # 高度到位判据（实测 z ≤ 目标 z + 该值）
@@ -136,7 +143,8 @@ rescue_drop:
   min_confidence: 0.70
   # 投票参数默认取 detection 段；需要单独覆盖时在本段写同名键。
   hover_seconds: 3.0
-  wait_timeout: 10.0
+  # 与 hazard_drop 同步：15 s（VLM 约 5–7.5 s，再加约 4 s 连续发布）
+  wait_timeout: 15.0
   height: 0.15
   speed: 0.15
   tolerance: 0.02

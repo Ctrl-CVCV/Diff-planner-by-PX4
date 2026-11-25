@@ -1,8 +1,9 @@
 """Follow one confirmed target with OpenCV while the aircraft moves.
 
-A danger or non-danger sign is boxed on its triangular border. A portrait or
-non-portrait image is boxed on its blue square frame. The VLM is not called
-again; each camera frame only updates the box.
+The image sent to the VLM is always the outer rectangular frame. Afterward the
+published box differs: a sign uses the rectangle tangent to its triangle's
+three corners, and a portrait keeps the outermost frame. Frame color does not
+choose the VLM question, and the VLM is not called again.
 """
 import math
 
@@ -17,19 +18,72 @@ _YELLOW_HIGH = (40, 255, 255)
 
 
 def follow_target(image, shape, previous=None):
-    """Return {'bbox', 'polygon'} for the same target, or None when it is lost.
+    """Return the rectangle to publish, or None when the target is lost.
 
-    bbox is [x, y, width, height] in full-image pixels. polygon is the triangle
-    vertices when the target is a sign, and None for a square frame.
+    A sign box is tangent to the triangle's three corners. A portrait box is
+    the outermost square frame. polygon is always None.
     """
     if shape == 'triangle':
-        candidates = _triangles(image)
+        candidates = [{'bbox': triangle['bbox'], 'polygon': None}
+                      for triangle in _triangles(image)]
     elif shape == 'square':
-        candidates = [{'bbox': box, 'polygon': None}
-                      for box in list_square_frames(image, 'blue')]
+        candidates = [{'bbox': box, 'polygon': None} for box in _square_boxes(image)]
     else:
         raise ValueError('shape must be triangle or square')
     return _choose(candidates, previous)
+
+
+def _sign_outer_frame(image):
+    """Outer rectangular frame around the largest warning triangle, or None."""
+    squares = _square_boxes(image)
+    best = None
+    best_area = None
+    for triangle in _triangles(image):
+        outer = _enclosing_square(triangle['center'], squares)
+        if outer is None:
+            continue
+        area = triangle['bbox'][2] * triangle['bbox'][3]
+        if best is None or area > best_area:
+            best = {'bbox': list(outer), 'polygon': None}
+            best_area = area
+    return best
+
+
+def _enclosing_square(center, squares):
+    """Smallest square frame that contains the triangle center."""
+    cx, cy = center
+    containing = [box for box in squares
+                  if box[0] <= cx <= box[0] + box[2] and box[1] <= cy <= box[1] + box[3]]
+    if not containing:
+        return None
+    return min(containing, key=lambda box: box[2] * box[3])
+
+
+def _square_boxes(image):
+    boxes = []
+    for color in ('red', 'blue'):
+        boxes.extend(list_square_frames(image, color))
+    return boxes
+
+
+def recognition_crop(image, shape):
+    """Return the outer-frame crop sent to the VLM, or None while it is not visible.
+
+    Signs are not sent from the tight triangle box. bbox stays in full-image pixels.
+    """
+    if shape == 'triangle':
+        found = _sign_outer_frame(image)
+    elif shape == 'square':
+        found = follow_target(image, 'square')
+    else:
+        raise ValueError('shape must be triangle or square')
+    if not found:
+        return None
+    x, y, width, height = [int(value) for value in found['bbox']]
+    crop = image[y:y + height, x:x + width]
+    if crop.size == 0:
+        return None
+    return {'image': crop.copy(), 'bbox': found['bbox'], 'polygon': found.get('polygon')}
 
 
 def _choose(candidates, previous):
@@ -55,8 +109,7 @@ def _choose(candidates, previous):
     return best
 
 
-def _triangles(image, min_area_ratio=0.004, max_area_ratio=0.8,
-               border_scale=1.10, pad_px=6):
+def _triangles(image, min_area_ratio=0.004, max_area_ratio=0.8):
     height, width = image.shape[:2]
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError('tracking expects a BGR image')
@@ -77,17 +130,16 @@ def _triangles(image, min_area_ratio=0.004, max_area_ratio=0.8,
             continue
         points = approx.reshape(3, 2).astype(np.float32)
         center = points.mean(axis=0)
-        expanded = center + (points - center) * float(border_scale)
-        x, y, box_w, box_h = cv2.boundingRect(np.round(expanded).astype(np.int32))
-        x0 = max(0, x - pad_px)
-        y0 = max(0, y - pad_px)
-        x1 = min(width, x + box_w + pad_px)
-        y1 = min(height, y + box_h + pad_px)
+        x, y, box_w, box_h = cv2.boundingRect(np.round(points).astype(np.int32))
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(width, x + box_w)
+        y1 = min(height, y + box_h)
         if x1 - x0 < 16 or y1 - y0 < 16:
             continue
         found.append({
             'bbox': [int(x0), int(y0), int(x1 - x0), int(y1 - y0)],
-            'polygon': [[int(round(px)), int(round(py))] for px, py in expanded],
+            'center': (float(center[0]), float(center[1])),
         })
     return found
 

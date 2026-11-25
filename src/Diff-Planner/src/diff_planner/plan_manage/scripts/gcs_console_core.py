@@ -243,9 +243,34 @@ def cmd_planner(ws=None):
     return shell_command(ws, 'roslaunch diff_planner run_exp_hybrid_mission.launch')
 
 
-def cmd_yolo(ws=None, show_window=True):
-    suffix = '' if show_window else ' show_window:=false'
+# /yolo/enable 的两种模式（仅 VLM+OpenCV 方案使用）：
+#   0 = 危险标志，对应 C/D 点的危险品投放；
+#   1 = 人像，对应 E/F/G 点的救助人员投放。
+VLM_MODE_DANGER = 0
+VLM_MODE_PERSON = 1
+
+
+def cmd_yolo(ws=None, show_window=True, use_vlm=True):
+    args = []
+    if not show_window:
+        args.append('show_window:=false')
+    if not use_vlm:
+        args.append('use_vlm:=false')
+    suffix = (' ' + ' '.join(args)) if args else ''
     return shell_command(ws, 'roslaunch yolo_trt_ros yolo_trt.launch' + suffix)
+
+
+def vlm_enable_value(mode):
+    """把 GUI 的模式编号翻译成 /yolo/enable 的 Bool 值。"""
+    if mode not in (VLM_MODE_DANGER, VLM_MODE_PERSON):
+        raise ValueError('mode must be 0 (danger sign) or 1 (portrait)')
+    return mode == VLM_MODE_PERSON
+
+
+def cmd_vlm_trigger(mode, topic='/yolo/enable'):
+    """命令行兜底：GUI 的 ROS 线程未连接时用 rostopic 发一次触发。"""
+    value = 'true' if vlm_enable_value(mode) else 'false'
+    return 'rostopic pub -1 %s std_msgs/Bool "data: %s"' % (topic, value)
 
 
 def cmd_servo(ws=None):
