@@ -146,6 +146,17 @@ class CommandsTest(unittest.TestCase):
         self.assertIn('data: false', danger)
         self.assertIn('data: true', portrait)
 
+    def test_vlm_service_commands(self):
+        start = core.cmd_vlm_service_start()
+        self.assertIn('systemctl --user start qwen2.5-vl.service', start)
+        self.assertIn('http://127.0.0.1:8080/health', start)
+        self.assertIn('systemctl --user stop qwen2.5-vl.service',
+                      core.cmd_vlm_service_stop())
+
+    def test_vlm_service_ready_unreachable(self):
+        self.assertFalse(core.vlm_service_ready(
+            health_url='http://127.0.0.1:9/health', timeout=0.2))
+
     def test_mission_flags(self):
         argv = core.mission_argv(execute=True, map_verified=True, direct_verified=True,
                                  no_hazard=True, no_rescue=False)

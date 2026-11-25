@@ -273,6 +273,32 @@ def cmd_vlm_trigger(mode, topic='/yolo/enable'):
     return 'rostopic pub -1 %s std_msgs/Bool "data: %s"' % (topic, value)
 
 
+VLM_SERVICE = 'qwen2.5-vl.service'
+VLM_HEALTH_URL = 'http://127.0.0.1:8080/health'
+
+
+def cmd_vlm_service_start(service=VLM_SERVICE, health_url=VLM_HEALTH_URL, wait_seconds=90):
+    """启动 llama-server 并等到 /health 就绪（模型加载约需 10–30 s）。"""
+    return ('systemctl --user start %s && for i in $(seq 1 %d); do '
+            'curl -sf %s >/dev/null 2>&1 && echo "VLM 服务就绪" && exit 0; '
+            'sleep 1; done; echo "VLM 服务启动超时（%d s）"; exit 1'
+            % (service, int(wait_seconds), health_url, int(wait_seconds)))
+
+
+def cmd_vlm_service_stop(service=VLM_SERVICE):
+    return 'systemctl --user stop %s' % service
+
+
+def vlm_service_ready(health_url=VLM_HEALTH_URL, timeout=0.5):
+    """只读探测：VLM 推理服务是否已经加载好。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(health_url, timeout=timeout) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def cmd_servo(ws=None):
     return shell_command(ws, 'roslaunch px4_servo payload_servos.launch')
 

@@ -29,6 +29,7 @@ class RosWorker(QtCore.QThread):
     mission_signal = QtCore.pyqtSignal(dict)
     status_signal = QtCore.pyqtSignal(bool, str)
     health_signal = QtCore.pyqtSignal(dict)
+    vlm_service_signal = QtCore.pyqtSignal(bool)                  # llama-server /health
 
     TOPIC_SPECS = (
         ('lio', '/Odometry', 10.0, 'LIO /Odometry'),
@@ -72,6 +73,8 @@ class RosWorker(QtCore.QThread):
         self._last_mission = ''
         self.rospy = None
         self.enable_pub = None      # /yolo/enable（std_msgs/Bool），ROS 就绪后创建
+        self._vlm_ready = None
+        self._vlm_check = 0.0
 
     # ------------------------------------------------------------ helpers
     def _add_alert(self, level, text, node='monitor'):
@@ -256,6 +259,12 @@ class RosWorker(QtCore.QThread):
                     self.health_signal.emit(self._health(now))
                 except Exception as error:
                     self._add_alert('WARN', '健康检查异常：%s' % error)
+            if now - self._vlm_check >= 3.0:
+                self._vlm_check = now
+                ready = core.vlm_service_ready()
+                if ready != self._vlm_ready:
+                    self._vlm_ready = ready
+                    self.vlm_service_signal.emit(ready)
             time.sleep(0.1)
         try:
             rospy.signal_shutdown('gcs_console exit')
@@ -293,7 +302,7 @@ class ProcessManager(QtCore.QObject):
         process = self.processes.get(name)
         return process is not None and process.state() != QtCore.QProcess.NotRunning
 
-    def start(self, name, command):
+    def start(self, name, command, display=None):
         if self.running(name):
             self.output.emit(name, '已在运行，忽略重复启动\n')
             return False
@@ -303,7 +312,7 @@ class ProcessManager(QtCore.QObject):
         process.finished.connect(lambda code, status: self._finished(name, code))
         process.errorOccurred.connect(lambda error: self.output.emit(name, '进程错误：%s\n' % error))
         self.processes[name] = process
-        self.output.emit(name, '启动：%s\n' % command)
+        self.output.emit(name, '启动：%s\n' % (display or command))
         process.start('/bin/bash', ['-c', command])
         self.state.emit(name, True, 0)
         return True
@@ -364,6 +373,7 @@ class Console(QtWidgets.QMainWindow):
         self.ros.mission_signal.connect(self.on_mission)
         self.ros.status_signal.connect(self.on_ros_status)
         self.ros.health_signal.connect(self.on_health)
+        self.ros.vlm_service_signal.connect(self.on_vlm_service)
         self.ros.start()
         self._update_pose_timer = QtCore.QTimer(self)
         self._update_pose_timer.timeout.connect(self.refresh_pose_labels)
@@ -608,9 +618,7 @@ class Console(QtWidgets.QMainWindow):
         self.vision_backend = QtWidgets.QComboBox()
         self.vision_backend.addItems(['VLM + OpenCV', 'TensorRT YOLO'])
         self.vision_backend.setToolTip('VLM：/yolo/enable 单次触发；TensorRT YOLO：/yolo/enable 是电平开关')
-        self._component(grid, 3, '视觉识别', 'yolo',
-                        lambda: core.cmd_yolo(self.ws, self.yolo_window.isChecked(),
-                                              self.vision_backend.currentIndex() == 0))
+        self._component(grid, 3, '视觉识别', 'yolo', self.vision_command)
         grid.addWidget(QtWidgets.QLabel('识别方案'), 3, 4)
         grid.addWidget(self.vision_backend, 3, 5)
         self.yolo_window = QtWidgets.QCheckBox('显示识别窗口')
@@ -624,6 +632,25 @@ class Console(QtWidgets.QMainWindow):
         vision_hint.setStyleSheet('color: #777;')
         vision_hint.setWordWrap(True)
         grid.addWidget(vision_hint, 6, 0, 1, 6)
+        self.vlm_service_start = QtWidgets.QPushButton('启动 VLM 服务')
+        self.vlm_service_stop = QtWidgets.QPushButton('停止 VLM 服务')
+        self.vlm_service_start.clicked.connect(
+            lambda: self.processes.start('vlm_service', core.cmd_vlm_service_start(),
+                                         'VLM 推理服务（等待 /health 就绪）'))
+        self.vlm_service_stop.clicked.connect(
+            lambda: self.processes.start('vlm_service_stop', core.cmd_vlm_service_stop(),
+                                         '停止 VLM 推理服务'))
+        self.vlm_service_state = QtWidgets.QLabel('VLM 服务：检测中…')
+        self.vlm_service_state.setStyleSheet('color: #888;')
+        grid.addWidget(self.vlm_service_start, 7, 0, 1, 2)
+        grid.addWidget(self.vlm_service_stop, 7, 2, 1, 2)
+        grid.addWidget(self.vlm_service_state, 7, 4, 1, 2)
+        service_hint = QtWidgets.QLabel(
+            'VLM 服务是独立的推理进程 llama-server（127.0.0.1:8080），加载模型约 10–30 s；'
+            '「视觉识别」按钮只启动相机和 ROS 节点，不会启动它。状态每 3 s 自动检测。')
+        service_hint.setStyleSheet('color: #777;')
+        service_hint.setWordWrap(True)
+        grid.addWidget(service_hint, 8, 0, 1, 6)
         layout.addWidget(group)
 
         group, grid = self._group('VLM 单次识别（/yolo/enable）')
@@ -798,6 +825,11 @@ class Console(QtWidgets.QMainWindow):
             self.start_mission_btn.setEnabled(not running)
             self.stop_mission_btn.setEnabled(running)
             return
+        if name == 'vlm_service':
+            if running:
+                self.vlm_service_state.setText('VLM 服务：启动中…')
+                self.vlm_service_state.setStyleSheet('color: #b26a00;')
+            return          # 结束后交给健康探测更新为就绪/未运行
         label = getattr(self, 'state_' + name, None)
         if label is not None:
             label.setText('运行中' if running else ('已结束 (%d)' % code))
@@ -811,6 +843,19 @@ class Console(QtWidgets.QMainWindow):
 
     def vision_is_vlm(self):
         return self.vision_backend.currentIndex() == 0
+
+    def vision_command(self):
+        if self.vision_is_vlm() and not core.vlm_service_ready():
+            self.append_log('vlm', '警告：VLM 服务（127.0.0.1:8080）未就绪，触发会失败；'
+                                   '请先点“启动 VLM 服务”\n')
+        return core.cmd_yolo(self.ws, self.yolo_window.isChecked(), self.vision_is_vlm())
+
+    def on_vlm_service(self, ready):
+        label = getattr(self, 'vlm_service_state', None)
+        if label is None:
+            return
+        label.setText('VLM 服务：就绪' if ready else 'VLM 服务：未运行')
+        label.setStyleSheet('color: #2a7;' if ready else 'color: #c33;')
 
     def on_vision_backend_changed(self, index):
         is_vlm = index == 0
@@ -839,6 +884,9 @@ class Console(QtWidgets.QMainWindow):
         self.vlm_state.setStyleSheet('color: #2a7;')
 
     def start_control_stack(self):
+        if self.vision_is_vlm() and not core.vlm_service_ready():
+            self.append_log('console', '警告：VLM 服务未就绪，一键启动只启动视觉节点；'
+                                       '请先点“启动 VLM 服务”\n')
         self.append_log('console', '一键启动：PX4Ctrl → Diff-Planner → 视觉识别 → 舵机\n')
         self.processes.start('px4ctrl', core.cmd_px4ctrl(self.ws))
         QtCore.QTimer.singleShot(1200, lambda: self.processes.start(

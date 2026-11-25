@@ -64,6 +64,7 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 | PX4Ctrl | `roslaunch px4ctrl run_ctrl_lio.launch` |
 | Diff-Planner | `roslaunch diff_planner run_exp_hybrid_mission.launch` |
 | 视觉识别 | `roslaunch yolo_trt_ros yolo_trt.launch`；方案由右侧下拉框选择：**VLM + OpenCV**（默认，`use_vlm:=true`）或 **TensorRT YOLO**（`use_vlm:=false`）；可取消勾选显示窗口 |
+| 启动 / 停止 VLM 服务 | `systemctl --user start/stop qwen2.5-vl.service`（llama-server，`127.0.0.1:8080`）；启动后自动等到 `/health` 就绪（约 10–30 s），状态每 3 s 检测一次 |
 | 舵机控制 | `roslaunch px4_servo payload_servos.launch`（PWM_MAIN5..8，四路物资舵机，hold_s=2 s 自动回位） |
 
 「一键启动全部」按 PX4Ctrl → Planner → 视觉识别 → 舵机 顺序间隔启动；「一键停止全部」逆序停止。
@@ -73,6 +74,10 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 - 下拉框「识别方案」在点「视觉识别」启动时生效：`VLM + OpenCV` 或 `TensorRT YOLO`。
   两种方案的节点名（`/yolo_trt_detector`）、话题和检测 JSON 都相同，**切换前先停掉当前方案**，
   不要同时启动。
+- **VLM 方案需要两个东西**：`ROS 识别节点`（「视觉识别」按钮，含相机）和 `推理服务`
+  （「启动 VLM 服务」按钮，llama-server）。只启动前者时节点能起来，但每次识别都会报
+  `VLM request failed: Connection refused`，预览里也不会有结果。界面会检测服务状态并在启动
+  视觉节点时提示。
 - VLM 模式下，下方「VLM 单次识别（/yolo/enable）」组提供两个按钮：
   - **危险标志（C/D 点）→ 0**：发 `/yolo/enable = false`，识别一次危险标志；
   - **人像（E/F/G 点）→ 1**：发 `/yolo/enable = true`，识别一次人像。
