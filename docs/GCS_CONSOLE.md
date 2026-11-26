@@ -80,7 +80,7 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
   视觉节点时提示。
 - VLM 模式下，下方「VLM 单次识别（/yolo/enable）」组提供两个按钮：
   - **危险标志（C/D 点）→ 0**：发 `/yolo/enable = false`，识别一次危险标志；
-  - **人像（E/F/G 点）→ 1**：发 `/yolo/enable = true`，识别一次人像。
+  - **人像（F/G/H 点）→ 1**：发 `/yolo/enable = true`，识别一次人像。
   每点一次只识别一次。送给模型的是外层矩形边框，确认后按原格式发布约 4 s。
   **跑 `--execute` 任务时不需要点**：任务脚本到点会自己发这一条；按钮用于地面/悬停测试。
 - TensorRT YOLO 模式下 `/yolo/enable` 是**电平开关**（`false` 停推理并发布空检测，`true`
@@ -101,7 +101,7 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 
 面向"飞到目标点上方悬停 → 一键记录坐标"：
 
-- 选择航点（A～I 中配置存在者）；
+- 选择航点（A～J 中配置存在者）；
 - 读取当前 `/ekf/ekf_odom` 位姿（超过 1 s 未更新会拒绝打点）；
 - **x、y** = 当前位姿相对任务原点的水平坐标；
 - **z_offset** 取决于测量方式：
@@ -115,7 +115,16 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
   2. 只改该航点那一行（保留文件注释和其它行）；`xyz` 的 z 保持不变，只替换 x/y，
      并写入 `z_offset`；
   3. 可勾选同时写 `measured: true`；
-  4. 写完后重新解析校验，通过才落盘。
+  4. 写完后重新解析校验，通过才落盘；
+  5. **联动航点**：配置里某个点写了 `mirror: X`，写其中任意一个时，联动点的
+     x / y / z_offset 一起更新，yaw 保持原值。当前有：
+     - **C ↔ E**：E 带 `mirror_offset: [0.60, 0.0]`，始终保持在 C 的 +x 0.6 m；
+       打 C 会同步 E，打 E 会反推 C；
+     - **F ↔ I**：I 带 `mirror_offset: [-0.35, 0.0]`，始终保持在 F 的 −x 0.35 m；
+       打 F 会同步 I，打 I 会反推 F（F 90°/I 180°）。
+
+> 说明：z_offset 的语义是"该点地面/实测高度相对配置高度的偏差"，正数表示已记录的
+> 实测高度比配置高。打点时请让飞机稳定悬停在该点上方再点，否则记录的会是过渡位置。
 
 > 说明：z_offset 的语义是"该点地面/实测高度相对配置高度的偏差"，正数表示已记录的
 > 实测高度比配置高。打点时请让飞机稳定悬停在该点上方再点，否则记录的会是过渡位置。
@@ -123,7 +132,7 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
 打点区域还提供：
 
 - **实时 EKF 读数**：当前 x / y / z、时间戳延迟、所用任务原点及来源；
-- **航点配置表**：A～I 的配置 x / y / z、z_offset、measured 一屏显示，点选某行会同步切换打点目标航点，写入配置后表格自动刷新。
+- **航点配置表**：A～J 的配置 x / y / z、z_offset、measured 一屏显示，点选某行会同步切换打点目标航点，写入配置后表格自动刷新。
 
 ### 2.5 显示（可选）
 

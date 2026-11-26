@@ -8,7 +8,7 @@
 ## 1. 这次测试要验证什么
 
 1. YOLO 能稳定识别"救助人员"，任务脚本的投票判定能确认目标；
-2. 在 E、F、G 任一点确认目标后，飞机能按设定速度下降到离地 `height`，保持
+2. 在 F、G、H 任一点确认目标后，飞机能按设定速度下降到离地 `height`，保持
    `push_wait` 秒，再爬回航点高度继续任务；
 3. **全程不调用舵机、不投放**（`dry_run: true`）；
 4. 航点地面高度误差 `z_offset` 能按点修正高度目标。
@@ -19,8 +19,8 @@
 rescue_drop:
   enabled: true
   dry_run: true        # 当前测试模式：不推舵机
-  once: false          # E、F、G 各自独立判断
-  points: [E, F, G]
+  once: false          # F、G、H 各自独立判断
+  points: [F, G, H]
   label: 救助人员
   min_confidence: 0.70
   # 确认方式默认取 detection 段：当前 vote_mode: none（最近一帧命中即确认，VLM 用）
@@ -47,35 +47,38 @@ rescue_drop:
 
 ```yaml
 points:
-  C: {xyz: [0.43, 1.33, 0.80], yaw_deg: 180.0, z_offset: 0.0}
-  D: {xyz: [-0.03, 1.35, 0.8], yaw_deg: 180.0, z_offset: 0.0}
-  E: {xyz: [1.90, 2.66, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.0}
+  # E = C.x + 0.6m（同 y/z），机头 90°；mirror C + [0.6,0] 让打点时保持相对位置。
+  # D→E 是直控段，E 到点稳定 3 s 后再发 F。
+  E: {xyz: [1.150, 1.439, 0.80], yaw_deg: 90.0, z_offset: -0.024, measured: true}
+  # F、G、H 是救援识别点；I 与 F 联动（mirror: F），坐标必须一致。
+  F: {xyz: [1.991, 2.734, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.004}
+  G: {xyz: [1.160, 2.724, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.024}
+  H: {xyz: [2.759, 2.724, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.014}
+  I: {xyz: [1.995, 2.732, 0.8], yaw_deg: 180.0, measured: true, z_offset: -0.004, mirror: F}
 ```
 
 ## 3. 测试前检查（地面、锁桨）
 
-### 3.1 确认 YOLO 标签
+### 3.1 确认识别标签
+
+当前默认是 VLM + OpenCV 方案。先启动推理服务，再启动视觉节点：
 
 ```bash
+cd ~/apps/qwen2.5-vl-7b-gguf && ./manage start   # 等 /health 返回 ok
 roslaunch yolo_trt_ros yolo_trt.launch
 ```
 
-节点日志应打印：
-
-```text
-display labels: 0=危险品标识, 1=其它标识, 2=救助人员
-```
-
-另开终端：
+另开终端触发一次人像识别并看结果：
 
 ```bash
 source ~/gcs_ws/devel/setup.bash
-rostopic hz /yolo/detections
+rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"
 rostopic echo -n 1 /yolo/detections
 ```
 
-把打印出来的目标物放到画面中央，确认 `label` 字段确实是 `救助人员`、置信度 ≥ 0.70。
-如果标签名不同，改 `rescue_drop/label`，不要改代码。
+把目标物放到画面中央，确认 `label` 字段是 `救助人员`、置信度 ≥ 0.70；没有结果时看节点日志里
+是否在等外层矩形边框（VLM 只对外框内部做识别）。如果标签名不同，改 `rescue_drop/label`，
+不要改代码。
 
 ### 3.2 决定本次是否做危险品投放
 
@@ -93,7 +96,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 确认输出里同时出现：
 
 ```text
-救援物资降高度测试已启用：E/F/G 点连续稳定悬停 3.0s ... 测试模式不调用舵机、不投放 ...
+救援物资降高度测试已启用：F/G/H 点连续稳定悬停 3.0s ... 测试模式不调用舵机、不投放 ...
 已计入航点地面高度误差 z_offset：... （或"所有航点 z_offset=0"）
 ```
 
@@ -136,7 +139,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 rostopic echo /drone_0_mission/state
 ```
 
-### 4.3 E/F/G 上会发生什么
+### 4.3 F/G/H 上会发生什么
 
 到点后的时间线（`t=0` 为到达并开始悬停）：
 
@@ -150,7 +153,7 @@ rostopic echo /drone_0_mission/state
 
 未确认目标时：从到点起最多等 `wait_timeout`（15 s），然后按原任务流飞走，不下降。
 识别为「其它标识」时不等满 15 s，直接飞往下一点。
-`--execute` 模式下任务脚本到点会自动发 `/yolo/enable`（C/D=false，E/F/G=true），不用人工点；
+`--execute` 模式下任务脚本到点会自动发 `/yolo/enable`（C/D=false，F/G/H=true），不用人工点；
 手工/悬停测试时才需要自己触发。送给 VLM 的是外层矩形边框。
 
 日志关键字：
@@ -199,7 +202,7 @@ rostopic pub -r 20 /yolo/detections std_msgs/String \
 
 - 该航点所有高度目标（Planner 目标、直控终点、悬停）；
 - 危险品/救援的投放低点：`起飞原点 z + z_offset + height`；
-- I 点降落进近高度（如果启用 `landing/approach_height`）。
+- J 点降落进近高度（如果启用 `landing/approach_height`）。
 
 ### 5.2 怎么测
 
@@ -208,7 +211,8 @@ rostopic pub -r 20 /yolo/detections std_msgs/String \
 1. 在起飞点记录 EKF 原点（任务预检后会发布 `origin_world`；没有就按 0,0,0 近似）；
 2. 把飞机平放在 C 点对应的地面上，等 `/ekf/ekf_odom` 稳定后读 z；
 3. `z_offset = 实测 z − 原点 z`，就是该点地面相对起飞原点的高度（实测 C 点约 0.033 m）。
-4. 同理逐点测量 D/E/F/G。GCS 控制台"地面放置（推荐）"模式会直接算出这个值。
+4. 同理逐点测量 D/E/F/G/H（I 与 F 同坐标，GUI 打点时 `mirror` 会自动同步）。
+   GCS 控制台"地面放置（推荐）"模式会直接算出这个值。
 
 **方法 B：尺量法（没有定位时使用）**
 
@@ -233,12 +237,16 @@ rostopic pub -r 20 /yolo/detections std_msgs/String \
 points:
   C: {xyz: [0.43, 1.33, 0.80], yaw_deg: 180.0, z_offset: 0.07}
   D: {xyz: [-0.03, 1.35, 0.8], yaw_deg: 180.0, z_offset: -0.03}
-  E: {xyz: [1.90, 2.66, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.05}
-  F: {xyz: [1.08, 2.65, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.02}
-  G: {xyz: [2.66, 2.66, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.01}
+  # E = C.x + 0.6m，mirror C + mirror_offset [0.6,0]；z_offset 随 C 同步，仍需按该点地面核对
+  E: {xyz: [1.03, 1.33, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.07}
+  F: {xyz: [1.90, 2.66, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.05}
+  G: {xyz: [1.08, 2.65, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.02}
+  H: {xyz: [2.66, 2.66, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.01}
+  # I 与 F 同坐标；GUI 打点写 F 或 I 时另一点的 x/y/z_offset 自动同步
+  I: {xyz: [1.90, 2.66, 0.8], yaw_deg: 180.0, measured: true, z_offset: 0.05, mirror: F}
 ```
 
-**E、F、G 三个救援点都要单独记录**（它们是各自独立的检测/降高度点，地面高差互不相同）。
+**F、G、H 三个救援点都要单独记录**（它们是各自独立的检测/降高度点，地面高差互不相同）。
 只填需要补偿的点，没写的点按 0 处理。
 
 ### 5.4 检查是否生效
@@ -269,7 +277,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | --- | --- | --- |
 | 临时关闭救援测试 | 命令行加 `--no-rescue-drop` | 不订阅检测、不降高度 |
 | 正式投放（以后） | `rescue_drop/dry_run: false` | 测试通过后再改 |
-| 哪些点允许触发 | `rescue_drop/points` | 只允许 E/F/G |
+| 哪些点允许触发 | `rescue_drop/points` | 只允许 F/G/H |
 | 检测灵敏度 | `min_confidence` / `detection/vote_*` | 当前 `vote_mode: none`（单帧确认）；用 YOLO 时改回 `time`/`frames` 抑制误检 |
 | 检测等待时间 | `rescue_drop/wait_timeout` | 默认 15 s；「其它标识」不等满就飞往下一点 |
 | 下降高度 | `rescue_drop/height` | 相对该点地面 |
@@ -281,7 +289,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 | 现象 | 可能原因 | 处理 |
 | --- | --- | --- |
-| E/F/G 完全不下降 | YOLO 没运行 / 标签不是"救助人员" / 置信度不足 | `rostopic hz /yolo/detections`，核对 label 与 confidence |
+| F/G/H 完全不下降 | YOLO 没运行 / 标签不是"救助人员" / 置信度不足 | `rostopic hz /yolo/detections`，核对 label 与 confidence |
 | 画面里有目标但不触发 | 离图像中心最近的是别的类别（比如"其它标识"），中心目标才参与判定 | 让目标位于画面中央，或调整悬停位置 |
 | 只悬停不下降，15 s 后飞走 | VLM 没出结果或请求失败，或检测断更超 `max_age` | 看任务日志与 `/yolo/detections`；「其它标识」会立刻飞走 |
 | 预检报 `/servo3/push` 不可用 | `hazard_drop` 仍启用 | 加 `--no-hazard-drop`（本轮不测危险品时） |
@@ -292,11 +300,11 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 ## 8. 安全与限制
 
-- `dry_run` 只保证"不推舵机"，飞机仍会**真实下降到离地 0.15 m**：E/F/G 下方必须空旷、
+- `dry_run` 只保证"不推舵机"，飞机仍会**真实下降到离地 0.15 m**：F/G/H 下方必须空旷、
   无人员无杂物，飞手全程在控，随时准备接管。
 - 该功能只有离线单元测试（`tests/test_hybrid_mission.py` 的
   `RescueDropAndGroundOffsetTest`），**没有实飞验证**；第一次建议单独飞一轮，
   不要和危险品投放测试混在一起。
-- 默认开启会让 E/F/G 在没有识别结果时每点多等最多 15 s；比赛正式跑之前根据实测效果决定是否常开。
+- 默认开启会让 F/G/H 在没有识别结果时每点多等最多 15 s；比赛正式跑之前根据实测效果决定是否常开。
 - `z_offset` 有 ±0.30 m 的硬上限，是用来修正地面高差的，不是用来改变飞行高度的；
   要改整体飞行高度请改航点 `xyz` 的 z。

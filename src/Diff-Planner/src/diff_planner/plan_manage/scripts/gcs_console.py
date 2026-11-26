@@ -1033,10 +1033,19 @@ class Console(QtWidgets.QMainWindow):
             return
         label = values['label']
         measured = self.mark_measured.isChecked()
+        link = core.mirror_link(self.points, label)
+        mirror, mdx, mdy = link if link else (None, 0.0, 0.0)
         if values.get('mode') == core.CAPTURE_GROUND:
             detail = '测量方式：地面放置（z_offset 即该点地面相对起飞点的高度）\n'
         else:
             detail = '测量方式：空中悬停（z_offset = 实测高度 − 配置 z）\n'
+        if mirror and (abs(mdx) > 1e-9 or abs(mdy) > 1e-9):
+            mirror_text = ('联动航点：%s（x%+.2f / y%+.2f m，同一 z_offset，yaw 不改）\n'
+                           % (mirror, mdx, mdy))
+        elif mirror:
+            mirror_text = '联动航点：%s（同一 x/y/z_offset，yaw 不改）\n' % mirror
+        else:
+            mirror_text = ''
         answer = QtWidgets.QMessageBox.question(
             self, '确认写入航点 %s' % label,
             '将写入 %s：\n\n'
@@ -1044,11 +1053,12 @@ class Console(QtWidgets.QMainWindow):
             'y = %.3f\n'
             'z_offset = %+.3f（配置 z=%.3f）\n'
             '%s'
-            'measured = %s\n\n'
+            'measured = %s\n'
+            '%s\n'
             '原点来源：%s\n'
             '写入前会自动备份 hybrid_mission.yaml。确认？'
             % (label, values['x'], values['y'], values['z_offset'], values['configured_z'],
-               detail, 'true' if measured else '保持原样', values['origin_source']),
+               detail, 'true' if measured else '保持原样', mirror_text, values['origin_source']),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No)
         if answer != QtWidgets.QMessageBox.Yes:
@@ -1057,6 +1067,10 @@ class Console(QtWidgets.QMainWindow):
             text = self.config_path.read_text(encoding='utf-8')
             updated = core.update_point_line(text, label, values['x'], values['y'],
                                              values['z_offset'], measured=measured)
+            if mirror:
+                updated = core.update_point_line(updated, mirror, values['x'] + mdx,
+                                                 values['y'] + mdy,
+                                                 values['z_offset'], measured=measured)
             backup = core.backup_config(self.config_path)
             self.config_path.write_text(updated, encoding='utf-8')
         except (OSError, ValueError) as error:
@@ -1064,9 +1078,14 @@ class Console(QtWidgets.QMainWindow):
             return
         self.points = core.load_points(self.config_path)
         self.refresh_points_table()
-        self.append_log('waypoint', '%s 已写入：x=%.3f y=%.3f z_offset=%+.3f；备份 %s'
-                        % (label, values['x'], values['y'], values['z_offset'], backup))
-        QtWidgets.QMessageBox.information(self, '已写入', '航点 %s 已更新。' % label)
+        extra = ('；联动 %s 同步' % mirror) if mirror else ''
+        self.append_log('waypoint', '%s 已写入：x=%.3f y=%.3f z_offset=%+.3f%s；备份 %s'
+                        % (label, values['x'], values['y'], values['z_offset'], extra, backup))
+        message = '航点 %s 已更新。' % label
+        if mirror:
+            message += ('\n联动航点 %s 的坐标已同步（x%+.2f / y%+.2f m，yaw 保持原值）。'
+                        % (mirror, mdx, mdy))
+        QtWidgets.QMessageBox.information(self, '已写入', message)
 
     def choose_camera_output(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(

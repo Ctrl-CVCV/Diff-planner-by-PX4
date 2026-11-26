@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-POINT_NAMES = ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I')
+POINT_NAMES = ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J')
 MAX_Z_OFFSET = 0.30
 
 LEVEL_OK = 'ok'
@@ -106,8 +106,46 @@ def load_points(path):
             yaw_deg=point.get('yaw_deg', 0.0),
             z_offset=point.get('z_offset', 0.0),
             measured=point.get('measured', True),
+            mirror=point.get('mirror'),
+            mirror_offset=point.get('mirror_offset') or [0.0, 0.0],
         )
     return result
+
+
+def mirror_link(points, label):
+    """写 label 时要同步的航点及偏移：返回 (other, dx, dy)，没有则 None。
+
+    `mirror`/`mirror_offset` 只用于 GUI 打点联动：写一个点时，另一个点写成
+    (x+dx, y+dy, 同一 z_offset)，yaw 不动。
+    - 声明方（如 E 写了 mirror: C、mirror_offset: [0.6, 0]）：E = C + offset；
+      写 E 时 C = E - offset，所以 dx=-0.6。
+    - 反向（写 C 时）：E = C + offset，dx=+0.6。
+    """
+    point = points.get(label) or {}
+    target = point.get('mirror')
+    offset = point.get('mirror_offset') or [0.0, 0.0]
+    try:
+        ox, oy = float(offset[0]), float(offset[1])
+    except (TypeError, ValueError, IndexError):
+        ox = oy = 0.0
+    if target in points and target != label:
+        return target, -ox, -oy
+    for other, data in points.items():
+        if other == label or data.get('mirror') != label:
+            continue
+        offset = data.get('mirror_offset') or [0.0, 0.0]
+        try:
+            ox, oy = float(offset[0]), float(offset[1])
+        except (TypeError, ValueError, IndexError):
+            ox = oy = 0.0
+        return other, ox, oy
+    return None
+
+
+def mirror_of(points, label):
+    """与 label 联动的航点（可能带偏移），没有则 None。"""
+    link = mirror_link(points, label)
+    return None if link is None else link[0]
 
 
 CAPTURE_GROUND = 'ground'

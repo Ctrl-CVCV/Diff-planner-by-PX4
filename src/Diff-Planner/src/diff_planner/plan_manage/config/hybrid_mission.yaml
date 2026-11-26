@@ -9,20 +9,29 @@ controller_node: /px4ctrl
 # 离地高度），保证离地间隙仍是配置值。实测各点地面高低差后逐点填写，范围 ±0.30m。
 points:
   A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
-  B: {xyz: [1.75, 0.00, 0.8], yaw_deg: 0.0, z_offset: 0.00, measured: true}
-  C: {xyz: [0.359, 1.521, 0.80],yaw_deg: 180.0, z_offset: -0.027, measured: true}
-  D: {xyz: [-0.093, 1.498, 0.8], yaw_deg: 180.0, z_offset: -0.020, measured: true}
-  E: {xyz: [1.803, 2.844, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.048}
-  # F 是 Planner → 直控的切换点：到点悬停 arrival_dwell 秒后切直控。实测后填坐标并把 measured 改成 true。
-  # F、G 与 E 一样可能出现"救助人员"，z_offset 要逐点实测填写。
-  F: {xyz: [0.974, 2.807, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.059}
-  # G、H 由普通 PX4Ctrl 直控，各自到点悬停 arrival_dwell 秒；实测后填坐标并改 measured。
-  G: {xyz: [2.560, 2.866, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.074}
-  H: {xyz: [1.796, 2.840, 0.8], yaw_deg: 180.0, measured: true, z_offset: -0.060}
-  # I 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
+  B: {xyz: [1.75, 0.00, 0.8], yaw_deg: 0.0, z_offset: -0.059, measured: true}
+  C: {xyz: [0.463, 1.495, 0.80],yaw_deg: 180.0, z_offset: 0.002, measured: true}
+  D: {xyz: [-0.002, 1.489, 0.8], yaw_deg: 180.0, z_offset: 0.005, measured: true}
+  # E（2026-11-26 调整）：D→E 纯 PX4Ctrl 直控；x = C.x + 0.6m，y/z 与 C 相同，
+  # 机头 90°（转向后 F 在视野内）。这里视野更开阔，避开 C 点附近的膨胀障碍。
+  # mirror: C + mirror_offset [0.6, 0]：GUI 打点时 E 始终保持在 C 的 +x 0.6m，
+  # 写 C 会同步 E，写 E 会反推 C；z_offset 一起同步，yaw 不动。
+  # E 到点后要连续稳定悬停 arrival_dwell（3 s）再发 F：直飞中途切 Planner 会导致急停。
+  E: {xyz: [1.063, 1.495, 0.80], yaw_deg: 90.0, z_offset: 0.002, measured: true, mirror: C, mirror_offset: [0.60, 0.0]}
+  # F、G 由 Planner 飞；G 是 Planner → 直控的切换点，到点悬停 arrival_dwell 秒后切直控。
+  # F、G、H 都可能出现"救助人员"，z_offset 要逐点实测填写。
+  F: {xyz: [1.989, 2.733, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.010}
+  G: {xyz: [1.162, 2.736, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.010}
+  # H、I 由普通 PX4Ctrl 直控；I 是经过点，不悬停。
+  # I = F.x - 0.35m（y/z 同 F），避开 F 附近的膨胀障碍。
+  # mirror: F + mirror_offset [-0.35, 0]：GUI 打点写 F 或 I 时保持这个相对位置，
+  # z_offset 同步，yaw 不动。
+  H: {xyz: [2.756, 2.739, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.008}
+  I: {xyz: [1.639, 2.733, 0.8], yaw_deg: 180.0, measured: true, z_offset: -0.010, mirror: F, mirror_offset: [-0.35, 0.0]}
+  # J 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
   # y=-0.10 是实测落点左偏的经验补偿：world y 指向起飞航向的左侧，取 -0.10 即向右挪 10cm。
   # 这个值按实测落点偏差调整，不是原始测量坐标；改完仍会按 landing/target_tolerance 收敛后再降落。
-  I: {xyz: [0.00, 0.05, 0.8], yaw_deg: 180.0}
+  J: {xyz: [0.00, 0.05, 0.8], yaw_deg: 180.0}
 
 takeoff:
   height: 0.80
@@ -89,7 +98,7 @@ detection:
 #   逻辑 3 号输出 / MAIN7（2500）：投放 1 号（消防）、3 号（救援）；
 #   逻辑 4 号输出 / MAIN8（2500）：投放 2 号（救援）、4 号（救援）。
 #   服务前缀 /servo1../servo4 对应上面四路逻辑输出；动作后舵机 hold_s 自动回 500。
-# 四种物资按 1→2→3→4 顺序投放，不一定装满；救援物资在 E/F/G 每确认一次投放一个，
+# 四种物资按 1→2→3→4 顺序投放，不一定装满；救援物资在 F/G/H 每确认一次投放一个，
 # 依次消耗 2、3、4 号，用完即止。
 #
 # 危险品投放（2026-10-31 起默认启用）。开启后：在 hazard_drop/points 里的航点连续稳定悬停
@@ -126,7 +135,7 @@ hazard_drop:
   offset_body: [0.075, 0.0]
 
 # 救援物资（2026-11-14 起默认启用，当前 dry_run=true 只测试降高度）。
-# E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 列表顺序消耗：
+# F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 列表顺序消耗：
 #   第 1 次 → 2 号（/servo4 → MAIN8，500→2500）
 #   第 2 次 → 先 /servo1 + /servo2（MAIN5/6）同时打到 1143 把 3/4 号下放到底层，
 #             再 /servo3（MAIN7）投放 3 号
@@ -138,7 +147,7 @@ rescue_drop:
   enabled: true
   dry_run: true
   once: false
-  points: [E, F, G]
+  points: [F, G, H]
   label: 救助人员
   min_confidence: 0.70
   # 投票参数默认取 detection 段；需要单独覆盖时在本段写同名键。
@@ -170,9 +179,9 @@ mission:
   planner_first_command_timeout: 2.0
   planner_timeout: 45.0
   direct_timeout: 30.0
-  # 到点后连续稳定悬停多久再发下一段。2026-10-31：C、D、E、F、G 要求悬停 3s，因此设为 3.0。
+  # 到点后连续稳定悬停多久再发下一段。2026-10-31：B～H 的普通航点要求悬停 3s，因此设为 3.0。
   # 这个值同时作用于 B（B 不再是经过点，停下稳定后从静止规划 B→C，避免带着速度进 139°
-  # 折返导致优化器超速被拒而急停）；B 因此也是 3s。H 是经过点、不悬停；I 用下面 hover_seconds。
+  # 折返导致优化器超速被拒而急停）；B 因此也是 3s。I 是经过点、不悬停；J 用下面 hover_seconds。
   arrival_dwell: 3.0
   hover_seconds: 3.0
   pass_radius: 0.30
@@ -212,13 +221,14 @@ safety:
   motion_timeout: 3.0
   motion_distance: 0.04
   max_tracking_error: 0.60
-  # 规划速度 0.24m/s：Planner 接受上限 0.59（max_vel 0.24 + vel_tolerance 0.35；
-  # 2026-10-31 0.30→0.32（0.56）；2026-11-24 实测峰值 0.575 超过 0.56、D 点又贴近障碍，
-  # 经飞手同意放宽到 0.35（0.59），仍低于本文件的 max_command_speed 0.60）。
-  # 指令检查留余量到 0.60，实测上限 0.65（PX4Ctrl 反馈钳位 0.50）。
+  # 规划速度 0.24m/s：Planner 接受上限 0.61（max_vel 0.24 + vel_tolerance 0.37；
+  # 2026-10-31 0.30→0.32（0.56）；2026-11-24 放宽到 0.35（0.59）；
+  # 2026-11-26 E 点已稳定悬停仍被优化器峰值 0.591–0.606 连续拒绝并急停，
+  # 经飞手同意放宽到 0.37（0.61），本文件 max_command_speed 0.60 → 0.62）。
+  # 指令检查留余量到 0.62，实测上限 0.65（PX4Ctrl 反馈钳位 0.50）。
   # 注意：max_command_speed 必须高于 Planner 的接受上限，否则 Planner 合格的轨迹会被任务脚本拦下。
   max_measured_speed: 0.65
-  max_command_speed: 0.60
+  max_command_speed: 0.62
   max_command_acceleration: 2.0
   max_command_jerk: 10.0
   # 估计器健康：只看 EKF 与 LIO 的位置一致性。LIO header.stamp 不参与中止判定
@@ -250,5 +260,5 @@ topics:
   # 危险品或救援投放启用时才订阅。
   detections: /yolo/detections
   # 单次识别触发（std_msgs/Bool）。到达 C/D 发 false，做一次危险品识别；
-  # 到达 E/F/G 发 true，做一次人像识别。不是持续开关。
+  # 到达 F/G/H 发 true，做一次人像识别。不是持续开关。
   yolo_enable: /yolo/enable

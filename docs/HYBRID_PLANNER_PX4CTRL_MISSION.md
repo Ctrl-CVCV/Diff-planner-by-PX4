@@ -9,19 +9,21 @@ A 地面原点 → 自动起飞 → A 上方悬停 3 s
 → WAIT_PLANNER_B → PLANNER_B → B 到点稳定 3 s（2026-10-31 起 B 不再是经过点）
 → WAIT_PLANNER_C（桥接转发上一段 B 轨迹）→ PLANNER_C → C 到点稳定 3 s
 → DIRECT → DWELL（D 稳定 3 s）
-→ WAIT_PLANNER_E → PLANNER_E → E 稳定 3 s
-→ WAIT_PLANNER_F → PLANNER_F → F 稳定 3 s（之后切直控）
-→ DIRECT → DWELL（G 稳定 3 s）→ DIRECT（H 经过点：距 H ≤ pass_radius 立即发 I，不悬停）
-→ WAIT_PLANNER_I（继续跟踪 G→H 直控参考，不停车）→ PLANNER_I → HOLD（I 稳定 3 s）
+→ DIRECT → DWELL（E 稳定 3 s）
+→ WAIT_PLANNER_F → PLANNER_F → F 稳定 3 s
+→ WAIT_PLANNER_G → PLANNER_G → G 稳定 3 s（之后切直控）
+→ DIRECT → DWELL（H 稳定 3 s）→ DIRECT（I 经过点：距 I ≤ pass_radius 立即发 J，不悬停）
+→ WAIT_PLANNER_J（继续跟踪 H→I 直控参考，不停车）→ PLANNER_J → HOLD（J 稳定 3 s）
 → 落点参考收敛检查（默认不下降；approach_height>0 时先 DESCEND）→ LANDING → DONE
 ```
 
-- 航段表由模块级 `mission_legs()` 唯一定义（`run()` 与预检共用）：`B/planner`、`C/planner`、`D/direct`、`E/planner`、`F/planner`、`G/direct`、`H/direct 经过点`、`I/planner`。Planner 与直控可以多次来回切换，每次切回 Planner 都要求更新的 `trajectory_id` 和更新的 `header.stamp`。
-- 只有 H 是经过点：不做 3 秒到点计时，实测距离进入 `mission/pass_radius` 就发 I 目标；等待期间继续跟踪 G→H 的直控参考轨迹（到终点后自然变成定点保持）——避免在经过点急停。B 自 2026-10-31 起改为到点悬停 `arrival_dwell` 再切 C（B→C 是 139° 折返，从静止规划避免优化器超速被拒）。
-- H 的经过点判定在直控段内完成：G→H 的直控轨迹还没走完就可能切到 `WAIT_PLANNER_I`，此时 H 的 `yaw_deg` 仍在生效，G(90°)→H(270°) 的 180° 转向会走大半，随后由 `PLANNER_I` 的偏航步进把航向拉回 I 的 180°（限速 25°/s）。若不希望在 H 附近转向，把 H 的 `yaw_deg` 改成与 G 相同即可。
-- F 是 Planner→直控切换点：到点条件（位置/航向/低速 + Planner 终点零速保持）满足后，再连续稳定 `mission/arrival_dwell` 才切换直控。
-- B、C、D、E、F、G 各自到点连续稳定悬停 `mission/arrival_dwell`（当前 3.0 s）；I 是终点，到点悬停 `mission/hover_seconds` 后先按 `landing/target_tolerance`(0.03 m) / `target_speed`(0.05 m/s) 等落点参考收敛再请求降落（默认不再下降，`landing/approach_height>0` 时才先进近，见第 10 节）。
-- I 的相对坐标是 `[0,0,0.8]`（A 正上方、飞行高度），航向与起飞相反（180°）。不要写 `[0,0,0]`，那是地面点。
+- 航段表由模块级 `mission_legs()` 唯一定义（`run()` 与预检共用）：`B/planner`、`C/planner`、`D/direct`、`E/direct`、`F/planner`、`G/planner`、`H/direct`、`I/direct 经过点`、`J/planner`。Planner 与直控可以多次来回切换，每次切回 Planner 都要求更新的 `trajectory_id` 和更新的 `header.stamp`。
+- I 是经过点：不做 3 秒到点计时，实测距离进入 `mission/pass_radius` 就发 J。
+  等待期间继续跟踪 H→I 的直控参考轨迹（到终点后自然变成定点保持）——避免在经过点急停。B 自 2026-10-31 起改为到点悬停 `arrival_dwell` 再切 C（B→C 是 139° 折返，从静止规划避免优化器超速被拒）。
+- I 的经过点判定在直控段内完成：H→I 的直控轨迹还没走完就可能切到 `WAIT_PLANNER_J`，此时 I 的 `yaw_deg` 仍在生效，H(90°)→I(180°) 的 180° 转向会走大半，随后由 `PLANNER_J` 的偏航步进把航向拉回 J 的 180°（限速 25°/s）。若不希望在 I 附近转向，把 I 的 `yaw_deg` 改成与 H 相同即可。
+- G 是 Planner→直控切换点：到点条件（位置/航向/低速 + Planner 终点零速保持）满足后，再连续稳定 `mission/arrival_dwell` 才切换直控。
+- B、C、D、E、F、G、H 各自到点连续稳定悬停 `mission/arrival_dwell`（当前 3.0 s）；J 是终点，到点悬停 `mission/hover_seconds` 后先按 `landing/target_tolerance`(0.03 m) / `target_speed`(0.05 m/s) 等落点参考收敛再请求降落（默认不再下降，`landing/approach_height>0` 时才先进近，见第 10 节）。
+- J 的相对坐标是 `[0,0,0.8]`（A 正上方、飞行高度），航向与起飞相反（180°）。不要写 `[0,0,0]`，那是地面点。
 - 未实测的航点在 YAML 里写 `measured: false`：预览会警告，`--execute` 会被直接拒绝。
 - 操作步骤、检查单和 bag 回放方法见 [混合任务飞行与回放运行手册](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md)。
 
@@ -63,21 +65,21 @@ Diff-Planner → traj_server → /drone_0_mission/planner_cmd
 开启后在 Planner 心跳仍健康时持续发布轨迹终点的零速度保持指令，供任务转发并完成航向调整。
 不会靠放宽“指令断更”保护来伪装轨迹仍有效。Planner 心跳丢失仍会停止持续输出。
 
-B 自 2026-10-31 起不再是经过点：同 C、E、F 一样，到点（实测到位 + Planner 终点零速保持）后连续稳定悬停 `mission/arrival_dwell`，再从静止状态发送一次 C 点 `/goal`。等待 C 新轨迹期间继续转发上一段 B 的 Planner 指令（“桥接”），避免在 B 附近急停；该指令必须在 `safety/planner_command_timeout` 内保持新鲜，否则按保护降落处理。
+B 自 2026-10-31 起不再是经过点：和 C、D、E、F、G、H 一样，到点（实测到位 + Planner 终点零速保持）后连续稳定悬停 `mission/arrival_dwell`，再从静止状态发送一次 C 点 `/goal`。等待 C 新轨迹期间继续转发上一段 B 的 Planner 指令（“桥接”），避免在 B 附近急停；该指令必须在 `safety/planner_command_timeout` 内保持新鲜，否则按保护降落处理。
 
-到 C 后，必须同时满足实测到点、航向/低速，以及 Planner 参考到达 C 的零速度、零加速度、零 jerk 终点保持，并连续确认 `mission/arrival_dwell`，才进入 DIRECT。此时不再转发 Planner 指令，**不发送 `/mandatory_stop_to_planner`**；Planner 和地图继续运行。D 点位置/航向/低速连续达标后，发送一次 E 点 `/goal`。等待阶段持续保持 D 附近的实测稳定位置；只有目标发送后接收到消息、原始指令时间戳不早于发送时刻，且 `trajectory_id` 大于切换前记录的 ID，才重新放行 Planner。随后仍检查指令新鲜度、坐标系、速度、跟踪误差和安全边界。
+到 C 后，必须同时满足实测到点、航向/低速，以及 Planner 参考到达 C 的零速度、零加速度、零 jerk 终点保持，并连续确认 `mission/arrival_dwell`，才进入 DIRECT。此时不再转发 Planner 指令，**不发送 `/mandatory_stop_to_planner`**；Planner 和地图继续运行。C→D 直控到点、稳定悬停后，再直控 D→E（E 在 C 的 +x 0.6 m、机头 90°）；E 点位置/航向/低速连续达标后，发送一次 F 点 `/goal`。等待阶段持续保持 E 附近的实测稳定位置；只有目标发送后接收到消息、原始指令时间戳不早于发送时刻，且 `trajectory_id` 大于切换前记录的 ID，才重新放行 Planner。随后仍检查指令新鲜度、坐标系、速度、跟踪误差和安全边界。
 
-同样的规则适用于多次切换：D→E、E→F、H→I 都要重新发 `/goal` 并等待更新的 `trajectory_id`；F→G、G→H 是直控段，不读取 Planner 数据。F 在 Planner 段到达条件满足后，和 C、E 一样按 `mission/arrival_dwell` 连续稳定悬停，再由脚本切到直控。
+同样的规则适用于多次切换：E→F、F→G、I→J 都要重新发 `/goal` 并等待更新的 `trajectory_id`；C→D、D→E、G→H、H→I 是直控段，不读取 Planner 数据。G 在 Planner 段到达条件满足后，和其他航点一样按 `mission/arrival_dwell` 连续稳定悬停，再由脚本切到直控。
 
-H 与 B 一样是经过点，但它在直控段内判定：G→H 的直控参考轨迹执行到实测距离进入 `mission/pass_radius` 时立即发送 I 点 `/goal`，并进入 `WAIT_PLANNER_I`；等待期间继续跟踪 G→H 的直控参考（不读 Planner 数据，也不停车），直到 I 的新轨迹到达才切换。因此 H 不再有“到点 + 3 秒悬停”的停留。
+I 与 B 一样是经过点，但它在直控段内判定：H→I 的直控参考轨迹执行到实测距离进入 `mission/pass_radius` 时立即发送 J 点 `/goal`，并进入 `WAIT_PLANNER_J`；等待期间继续跟踪 H→I 的直控参考（不读 Planner 数据，也不停车），直到 J 的新轨迹到达才切换。因此 I 不再有“到点 + 3 秒悬停”的停留。
 
-H→I 重新回到 Planner 后，I 到点连续稳定 `mission/hover_seconds`，再等落点参考收敛到 `landing/target_tolerance` / `landing/target_speed` 以内才请求降落；`landing/approach_height>0` 时中间多一段 DESCEND 进近（见第 10 节）。`trajectory_id` 必须单调递增（已修复 `TrajContainer::setGlobalTraj()` 重置 `traj_id` 导致每次新目标都从 1 开始的问题）；若日志仍报“未收到新轨迹 ID”，先查 Planner 是否真的收到 `/goal` 并产生新轨迹，不要放宽检查。
+I→J 重新回到 Planner 后，J 到点连续稳定 `mission/hover_seconds`，再等落点参考收敛到 `landing/target_tolerance` / `landing/target_speed` 以内才请求降落；`landing/approach_height>0` 时中间多一段 DESCEND 进近（见第 10 节）。`trajectory_id` 必须单调递增（已修复 `TrajContainer::setGlobalTraj()` 重置 `traj_id` 导致每次新目标都从 1 开始的问题）；若日志仍报“未收到新轨迹 ID”，先查 Planner 是否真的收到 `/goal` 并产生新轨迹，不要放宽检查。
 
 原先在 B 发送 mandatory stop 的实现仅适用于“切出后直接降落”，不适用于切回 Planner。本仓库 `mandatoryStopCallback()` 会进入 `EMERGENCY_STOP` 并设置 `enable_fail_safe_ = false`；再次发送 `/goal` 不会清除这个锁定。现在只在最终降落或允许的保护降落时发送 mandatory stop；已经锁定时拒绝强行恢复。**每轮任务后应落地锁桨，再重启隔离 Planner**，不要在空中重启来解除急停。
 
 ### 2.1 是否使用原生接口
 
-使用原生接口，但比赛任务状态机和独占指令切换是本脚本新增的，不是声称 Diff-Planner 自带完整的 A/B/C/D/E/F/G/H/I 任务模式：
+使用原生接口，但比赛任务状态机和独占指令切换是本脚本新增的，不是声称 Diff-Planner 自带完整的 A/B/C/D/E/F/G/H/I/J 任务模式：
 
 - 规划目标：原生 `/goal`，类型 `geometry_msgs/PoseStamped`，对应 `diff_planner/plan_manage/src/diff_replan_fsm.cpp` 的 `waypointCallback()`。
 - 位置直控：原生 PX4Ctrl `~cmd`，类型 `quadrotor_msgs/PositionCommand`，本机 `realflight_modules/px4ctrl/launch/run_ctrl_lio.launch` 将它映射到 `/setpoints_cmd`；`input.cpp` 的 `Command_Data_t::feed()` 直接读取位置、速度、加速度、jerk 和 yaw，不要求来自 Planner。
@@ -111,7 +113,7 @@ takeoff:
 
 - 默认 `takeoff_relative`：**A 就是这一轮地面起飞原点，固定填写 `(0,0,0)`**。脚本在输入 `MISSION` 后的最后一次地面检查中，记录 `/ekf/ekf_odom` 的实际起点 `(x0,y0,z0)`，本轮任务中不再更新这个原点。
 - 起飞悬停点为相对 A 的 `(0,0,takeoff.height)`；不是把飞机起飞后的当前位置重新设为零。A.z=0 不会被当成空中位置目标发给 PX4Ctrl。
-- B/C/D/E/F/G/H/I 的 `xyz` 单位米，都是**相对同一个地面 A 原点**，不是相对上一点。示例 B 在 A 的 +X 方向 0.5 m、高度 0.8 m；C 在 A 的 +X 0.5 m、+Y 0.5 m；I 回到 A 正上方 0.8 m、航向 180°。以上都是示例，实际以当前 YAML 为准；必须按实际场地修改并核对 I 下方降落区，不能把示例视为已验证的实飞航线。
+- B/C/D/E/F/G/H/I/J 的 `xyz` 单位米，都是**相对同一个地面 A 原点**，不是相对上一点。示例 B 在 A 的 +X 方向 0.5 m、高度 0.8 m；C 在 A 的 +X 0.5 m、+Y 0.5 m；J 回到 A 正上方 0.8 m、航向 180°。以上都是示例，实际以当前 YAML 为准；必须按实际场地修改并核对 J 下方降落区，不能把示例视为已验证的实飞航线。
 - 相对坐标仅做平移：`p_world = (x0,y0,z0) + p_relative`。轴方向仍平行 world：+X 不一定是机头前方，+Y 不一定是机体左方；不自动跟随起飞机头旋转。
 - `yaw_deg` 用度，绕 +Z 轴按右手方向：0° 朝 world +X，90° 朝 world +Y；不是相对当前机头旋转。
 - 起飞前机头朝向须匹配 A 的 yaw，地面速度不超过 0.1 m/s；不会在地面或起飞途中主动横移、转向寻找起点。
@@ -120,7 +122,7 @@ takeoff:
 - 兼容旧参数：显式 `coordinate_mode: world`，或旧文件没有此字段时，仍按原先绝对 world 坐标执行，A 表示空中起飞悬停点而非地面原点；两种模式不要混写。
 - Planner 的 `/goal` 回调只读取位置，不保证执行消息中的四元数。任务脚本因此在转发 Planner 轨迹时单独限速控制到各航点的航向，并用实测航向确认到点。
 - C→D 使用五次时间插值，发送位置、速度、加速度、jerk、yaw 和 yaw_dot；不是向 D 瞬间跳变一个大位置阶跃。
-- C→D、F→G、G→H 不使用 Planner 做避障，必须人工确认整条直控通道安全；A→B、B→C、D→E、E→F、H→I 都要检查地图，最终降落区在 I 下方。B、C、D、E、F、G 各做 `arrival_dwell`（3 s）到点稳定确认，H 是唯一经过点（进入 `pass_radius` 即走），I 的 3 秒最终悬停由 `hover_seconds` 控制，随后等落点参考收敛（`landing/target_*`）再交 PX4Ctrl 降落。
+- C→D、D→E、G→H、H→I 不使用 Planner 做避障，必须人工确认整条直控通道安全；A→B、B→C、E→F、F→G、I→J 都要检查地图，最终降落区在 J 下方。B、C、D、E、F、G、H 各做 `arrival_dwell`（3 s）到点稳定确认，I 是经过点（进入 `pass_radius` 即走），J 的 3 秒最终悬停由 `hover_seconds` 控制，随后等落点参考收敛（`landing/target_*`）再交 PX4Ctrl 降落。
 - 自定义旧 YAML 必须补充 `points/D`、`points/E` 的 `xyz` 和 `yaw_deg`；E 必须在任务边界和地图虚拟上下边界内。E 未实测时保留 `measured: false`，脚本拒绝执行；不静默猜测目的地。
 
 主要调参项：
@@ -138,9 +140,9 @@ takeoff:
 | `direct/max_acceleration` | 0.30 m/s² | C→D 参考轨迹最大加速度 |
 | `direct/max_jerk` | 1.0 m/s³ | C→D 参考轨迹 jerk 上限 |
 | `direct/max_yaw_rate_deg` | 25 °/s | Planner 段航向限速、直控段最大航向速率 |
-| `mission/arrival_dwell` | 3 s | B、C、D、E、F、G 位置、航向、速度（Planner 段还要求终点零速保持）连续满足到点条件的时长；H 是经过点，不计时 |
+| `mission/arrival_dwell` | 3 s | B、C、D、E、F、G、H 位置、航向、速度（Planner 段还要求终点零速保持）连续满足到点条件的时长；I 是经过点，不计时 |
 | `mission/hover_seconds` | 3 s | I 点连续稳定悬停后开始进近降落的时长，不能小于 3 秒 |
-| `mission/pass_radius` | 0.30 m | H 作为经过点的切换半径；必须小于“G→H”的距离（预检仍会校验它对“起飞悬停点→B”的约束，但 B 已不是经过点、不再用它） |
+| `mission/pass_radius` | 0.30 m | I 作为经过点的切换半径；必须小于“H→I”的距离（预检仍会校验它对“起飞悬停点→B”的约束，但 B 已不是经过点、不再用它） |
 | `landing/target_tolerance` | 0.03 m | **发 LAND 的落点判据**：悬停 `hover_seconds` 后，实测位置与 I 的距离必须跌到该值以内；比 `safety/position_tolerance`(0.10 m) 更紧，因为 PX4Ctrl 冻结的就是这一刻的实测位姿 |
 | `landing/target_speed` | 0.05 m/s | 同上判据的实测速度上限；比 `safety/arrival_speed`(0.20 m/s) 更紧 |
 | `landing/target_timeout` | 8 s | 判据收不紧时的兜底：超过 `hover_seconds + 该值` 仍未收敛就按当前位姿降落，并打印实测误差告警，不无限悬停 |
@@ -158,7 +160,7 @@ takeoff:
 | `safety/yaw_tolerance_deg` | 10° | 航向到点误差 |
 | `safety/arrival_speed` | 0.20 m/s | 到点时的实测速度上限 |
 | `safety/max_measured_speed` | 0.65 m/s | 实测速度上限；标准速度 0.30 m/s 的实测允许值 |
-| `safety/max_command_speed` | 0.55 m/s | 本脚本转发的位置指令速度上限；必须高于 Planner 验收上限（`max_vel` + `vel_tolerance` = 0.50），见 §9 |
+| `safety/max_command_speed` | 0.62 m/s | 本脚本转发的位置指令速度上限；必须高于 Planner 验收上限（`max_vel` + `vel_tolerance` = 0.61），见 §9 |
 | `safety/lio_timeout` | 1.0 s | `/Odometry`（10 Hz）的本机接收超时；2026-10-29 起独立于 `telemetry_timeout`，见 8.2 |
 | `safety/fcu_timeout` | 3 s | MAVROS 飞控状态及落地状态的本机接收超时；给低频更新留有限宽限，不代表允许离开 OFFBOARD 或断连 |
 | `safety/motion_timeout` | 3 s | 未接近目标时无有效位移超时 |
@@ -216,11 +218,11 @@ takeoff:
 | `safety/max_tracking_error` | 0.60 m | 指令位置与实际位置的最大距离 |
 | `safety/min_xyz`, `max_xyz` | 见 YAML | 历史上相对 A 的飞行包围盒；2026-10-27 起任务脚本已不再使用，旧值会被忽略 |
 
-到点条件同时要求位置、航向和速度达标。C、D、E、G、H、I 点若漂出到点条件，稳定悬停计时重新开始。每个 Planner 航段（B、C、E、F、I）分别重新计算首条新轨迹等待时限、总超时和 3 秒无位移看门狗；等待 D→E、E→F、H→I 的新轨迹时，切换前残留的 Planner 指令即使持续发布，也不能当作新目标的结果。
+到点条件同时要求位置、航向和速度达标。C、D、E、F、G、H、J 点若漂出到点条件，稳定悬停计时重新开始。每个 Planner 航段（B、C、F、G、J）分别重新计算首条新轨迹等待时限、总超时和 3 秒无位移看门狗；等待 E→F、F→G、I→J 的新轨迹时，切换前残留的 Planner 指令即使持续发布，也不能当作新目标的结果。
 轨迹限速只约束参考指令，不代表实机一定跟得上。参数过慢/旋转过久也可能触发 3 秒无位移保护，应先离线评估，不要直接放宽保护来掩盖控制问题。
 Planner 调速和地图膨胀仍使用原 Planner 的 launch/XML；任务 YAML 不会替代它们。
-起飞高度实际由 PX4Ctrl 执行；脚本只核对 `takeoff/height`，不会偷偷修改控制器参数。修改高度后须在地面同步核对 PX4Ctrl 配置、重启控制器并检查运行参数，以及 B/C/D/E/F/G/H/I 的相对高度。
-Planner 的 `virtual_ground`、`virtual_ceil` 仍是绝对 world 高度，**不会随 A 原点平移**；任务脚本本身不检查这两个边界，必须在 RViz/参数中人工核对 B/C/D/E/F/I 的可达性，不要直接放宽 Planner 边界来“过检查”。
+起飞高度实际由 PX4Ctrl 执行；脚本只核对 `takeoff/height`，不会偷偷修改控制器参数。修改高度后须在地面同步核对 PX4Ctrl 配置、重启控制器并检查运行参数，以及 B/C/D/E/F/G/H/I/J 的相对高度。
+Planner 的 `virtual_ground`、`virtual_ceil` 仍是绝对 world 高度，**不会随 A 原点平移**；任务脚本本身不检查这两个边界，必须在 RViz/参数中人工核对 B/C/D/E/F/G/H/I/J 的可达性，不要直接放宽 Planner 边界来“过检查”。
 改变 `topics/planner_cmd` 时，也必须同步修改隔离 launch 的输出话题，检查会拒绝不匹配的链路。
 
 ## 4. 推荐执行顺序
@@ -233,7 +235,7 @@ Planner 的 `virtual_ground`、`virtual_ceil` 仍是绝对 world 高度，**不�
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py
 ```
 
-默认仅检查 YAML 和显示 A/B/C/D/E/F/G/H/I，不连接 ROS，不起飞、不发目标、不发位置指令。航点带 `measured: false` 时打印警告；`--execute` 会被拒绝。
+默认仅检查 YAML 和显示 A/B/C/D/E/F/G/H/I/J，不连接 ROS，不起飞、不发目标、不发位置指令。航点带 `measured: false` 时打印警告；`--execute` 会被拒绝。
 可用 `--config /绝对路径/自己的参数.yaml` 选择参数副本。
 
 ### 4.2 地面锁桨时准备运行环境
@@ -292,7 +294,7 @@ roslaunch diff_planner view_obstacle_map.launch
 
 该 launch 同时启动只读的 `flight_path.py`（把 `/ekf/ekf_odom` 累积成 `/ekf/flight_path` 实测轨迹线，把 `/setpoints_cmd` 累积成 `/commanded_path` 指令轨迹线）和 RViz，第一次使用需先 `catkin_make -j2` 安装脚本；只想开 RViz 就改用 `rviz -d "$(rospack find diff_planner)/launch/include/live_obstacle_map.rviz"`，此时没有轨迹线。两条线都从节点启动时开始累积到降落，不是只显示当前一段。
 
-检查 A→B、B→C、D→E、E→F、H→I 地图、膨胀范围、坐标方向、C→D、F→G、G→H 直控通道和 I 下方降落区。地图消息新鲜不等于证明无障碍。
+检查 A→B、B→C、E→F、F→G、I→J 地图、膨胀范围、坐标方向、C→D、D→E、G→H、H→I 直控通道和 J 下方降落区。地图消息新鲜不等于证明无障碍。
 
 以上命令不依赖 `FLIGHT_DIR`，不发目标或起飞。`Fixed Frame=world`，橙色 `Occupancy Raw` 是未膨胀图，半透明蓝色 `Occupancy Inflated` 是膨胀图，黄色 `Flight Path (ekf_odom)` 是实际飞行轨迹，绿色 `Commanded Path (setpoints_cmd)` 是 Planner/任务发出的指令轨迹。完整的话题表、显示设置、无地图排查命令和隔离 bag 回放入口，见 [全流程手册第 7 节](HYBRID_MISSION_FLIGHT_AND_BAG_RUNBOOK.md#7-终端-5rviz-看实时地图和地面诊断)。
 
@@ -308,7 +310,7 @@ source ~/gcs_ws/devel/setup.bash
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py --check
 ```
 
-检查节点/话题归属、PX4Ctrl 地面状态、预计起飞悬停点、航向、起飞高度、地图输入、EKF/LIO/IMU 接收是否及时，以及 EKF/IMU 时间戳。LIO `/Odometry` 不再检查原始 `header.stamp`，但仍检查消息未收到或断更。日志显示实际 world 起点和转换后的悬停点、B/C/D/E/F/G/H/I，便于在 RViz 中核对。
+检查节点/话题归属、PX4Ctrl 地面状态、预计起飞悬停点、航向、起飞高度、地图输入、EKF/LIO/IMU 接收是否及时，以及 EKF/IMU 时间戳。LIO `/Odometry` 不再检查原始 `header.stamp`，但仍检查消息未收到或断更。日志显示实际 world 起点和转换后的悬停点、B/C/D/E/F/G/H/I/J，便于在 RViz 中核对。
 只订阅和读取状态，不注册飞行指令发布端，不发布目标、控制位置或降落请求。检查进程退出后再运行执行命令，不要并行启动任务。
 
 ### 4.5 执行分段任务
@@ -323,7 +325,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 人工确认后输入 `MISSION`。确认后再次完整检查地面起飞条件，发送一次 TAKEOFF，再等待起飞和稳定悬停，不需要另运行旧的起飞脚本。
 只有观察到 AUTO_TAKEOFF(4)、随后 AUTO_HOVER(2)，确认 armed+OFFBOARD、PX4 报告 IN_AIR(2)，且 A 上方起飞悬停点的位置/航向/低速连续满足 3 秒，才发送一次 B 点目标。起飞全过程不向 `/setpoints_cmd` 发布位置指令，不提前给 Planner 目标；起飞请求和 B 点目标都不自动重发。
-日志阶段依次为 `TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B → WAIT_PLANNER_C → PLANNER_C → DIRECT → DWELL → WAIT_PLANNER_E → PLANNER_E → WAIT_PLANNER_F → PLANNER_F → DIRECT → DWELL → DIRECT → WAIT_PLANNER_I → PLANNER_I → HOLD → LANDING → DONE`（`landing/approach_height>0` 时 HOLD 与 LANDING 之间多一个 `DESCEND`）。每个目标只发送一次，不自动重发；等待新轨迹超时且健康检查仍通过时走原有保护降落，不强行放行旧指令或清除急停。B 的 `PLANNER_B`、H 的 `DIRECT` 都可能非常短——经过点不要求悬停；Planner 航点的 3 秒悬停仍在 `PLANNER_x` 阶段内计时，不会单独出现 `DWELL`，`DWELL` 只用于直控到点后的悬停（当前只有 D、G）。
+日志阶段依次为 `TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B → WAIT_PLANNER_C → PLANNER_C → DIRECT → DWELL → DIRECT → DWELL → WAIT_PLANNER_F → PLANNER_F → WAIT_PLANNER_G → PLANNER_G → DIRECT → DWELL → DIRECT → WAIT_PLANNER_J → PLANNER_J → HOLD → LANDING → DONE`（`landing/approach_height>0` 时 HOLD 与 LANDING 之间多一个 `DESCEND`）。每个目标只发送一次，不自动重发；等待新轨迹超时且健康检查仍通过时走原有保护降落，不强行放行旧指令或清除急停。B 的 `PLANNER_B`、I 的 `DIRECT` 都可能非常短——经过点不要求悬停；Planner 航点的 3 秒悬停仍在 `PLANNER_x` 阶段内计时，不会单独出现 `DWELL`，`DWELL` 只用于直控到点后的悬停（当前 D、E、H）。
 `DONE` 的正常路径必须同时看到 FCU 已锁桨、PX4 报告落地；单纯发送 LAND 不算完成。唯一的例外是 2026-10-31 新增的收尾路径：本机 PX4 落地后可能长期不报 `landed_state=ON_GROUND`，PX4Ctrl 自己在落地判据成立 5 s 后把控制交还飞手（`MANUAL_CTRL`），任务脚本此时若实测离地 ≤ `landing/on_ground_height`（0.20 m）就收尾并提示杀桨——它不会自己解锁、停桨或切模式，仍需飞手操作。
 
 ## 5. 故障保护及边界
@@ -441,14 +443,14 @@ LIO 必须仍收到消息，并通过基于本机 `time.monotonic()` 接收时�
 
 | 层 | 位置 | 参数 | 现值 | 性质 |
 | --- | --- | --- | --- | --- |
-| Planner 优化 | `launch/exp/run_exp_single_lio.launch` | `max_vel` | 0.30 | 软惩罚项，不是硬约束；实测指令 0.37～0.59 m/s |
-| Planner 验收 | `launch/include/advanced_param_exp.xml` | `optimization/vel_tolerance` | 0.20 | 验收上限 = `max_vel + vel_tolerance` = 0.50 |
+| Planner 优化 | `launch/exp/run_exp_single_lio.launch` | `max_vel` | 0.24 | 软惩罚项，不是硬约束；实测指令峰值约 0.59–0.61 m/s |
+| Planner 验收 | `launch/include/advanced_param_exp.xml` | `optimization/vel_tolerance` | 0.37 | 验收上限 = `max_vel + vel_tolerance` = 0.61 |
 | traj_server | `traj_server.cpp` | 无 | — | 原样转发，不缩放 |
 | PX4Ctrl 指令 | `controller.cpp` `cmd_ctrl` | 无 | — | 位置指令不做速度钳位 |
 | PX4Ctrl 位置环 | `controller.cpp` `computePIDErrorAcc` | `max_auto_vel` | 0.50 | **真正的速度天花板**，逐轴；2026-10-29 前是硬编码 1.0 |
 | PX4Ctrl 手动 | `ctrl_param_fpv.yaml` | `max_manual_vel` | 0.30 | 仅 RC 增稳/悬停模式，不影响自动飞行 |
 | 姿态限制 | `ctrl_param_fpv.yaml` | `max_angle` | 20° | 约 3.57 m/s² 最大水平加速度 |
-| 任务脚本 | `config/hybrid_mission.yaml` | `max_command_speed` / `max_measured_speed` | 0.55 / 0.65 | 只检查本任务转发指令与实测，不限制 PX4Ctrl；必须高于 Planner 验收上限 0.50，否则合格轨迹会被脚本拦下 |
+| 任务脚本 | `config/hybrid_mission.yaml` | `max_command_speed` / `max_measured_speed` | 0.62 / 0.65 | 只检查本任务转发指令与实测，不限制 PX4Ctrl；必须高于 Planner 验收上限 0.61，否则合格轨迹会被脚本拦下 |
 
 `vel_tolerance` 原为 1.0，等于把验收上限放到 1.35 m/s，1.57 m/s 的指令也能通过验收；一度改为 0.10（验收上限 0.40），但优化器的软惩罚并不硬约束，常态输出就在 0.40 附近，2026-10-29 起飞首段因此连续几十次被验收拒绝，planner 交不出新轨迹；现改为 0.20（上限 0.50），并在 `poly_traj_optimizer.cpp` 里修正了日志——原先打印的是 `max_vel + 1.0` 的硬编码值（显示成 `> 1.3`），与实际判定阈值不符。`max_auto_vel` 的钳位是 2026-10-29 事故的直接上限来源：位置误差 0.125 m 就会让单轴速度指令饱和到 1.0 m/s，斜向可达 1.41 m/s，与实测 1.57～1.62 m/s 吻合（估计器发散时误差远大于 0.125 m）。
 
@@ -550,7 +552,7 @@ rescue_drop:
 
 - 只投消防物资：`rescue_drop/enabled: false`（或 `--no-rescue-drop`）。只有 C/D 确认危险品时
   投放 1 号（`hazard_drop/once: true`，全程一次）。
-- 消防 + 救援：两个都启用。危险品仍按上一条投 1 号；救援在 E/F/G 每确认一次"救助人员"，
+- 消防 + 救援：两个都启用。危险品仍按上一条投 1 号；救援在 F/G/H 每确认一次"救助人员"，
   按 `rescue_drop/payloads` 顺序消耗：第 1 次投 2 号，第 2 次先下放 3/4 号再投 3 号，
   第 3 次投 4 号，用完即止。某个点没检测到就继续任务，不消耗物资。
 
@@ -584,7 +586,7 @@ rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"    # 识别一次救助�
 （15 s）再走。
 
 **任务执行时触发是自动的**：到达需要识别的航点、开始稳定悬停计时的那一刻，任务脚本自己
-发一次 `/yolo/enable`（C/D 发 `false`，E/F/G 发 `true`，`request_recognition()`），同一航点
+发一次 `/yolo/enable`（C/D 发 `false`，F/G/H 发 `true`，`request_recognition()`），同一航点
 不重复触发。GUI 的两个触发按钮用于不跑任务时的地面/悬停测试。
 旧的 TensorRT 节点 `yolo_trt_node.py` 仍保留"电平开关"语义（`false` 停推理、`true` 恢复），
 当前 launch 用 `use_vlm:=false` 启动它，两者不能同时运行（节点名相同）。
@@ -592,7 +594,7 @@ rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"    # 识别一次救助�
 ## 12. 救援物资投放（默认仍为 dry_run 测试）
 
 `rescue_drop/enabled: true`、`rescue_drop/dry_run: true`（临时关闭用 `--no-rescue-drop`）。
-默认在 **E、F、G** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
+默认在 **F、G、H** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
 `detection` 段确认方式 + `max_age`）。2026-11-25 起 `detection/vote_mode: none`：
 **最近一帧命中即确认**（VLM 每次触发只有一个判定，再投票没有额外信息）；
 换回 TensorRT YOLO 时改回 `time` 或 `frames`，否则单帧误检会直接触发投放。

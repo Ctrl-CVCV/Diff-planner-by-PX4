@@ -150,7 +150,7 @@ rostopic echo -n 1 /ekf/flight_path | grep frame_id   # 应为 world
 | `Commanded Path (setpoints_cmd)` | `/commanded_path` | 绿色连续线条，指令轨迹（Planner + 直控段，从启动累积到降落） |
 | `Registered Cloud` | `/cloud_registered` | 灰色点云，默认关闭，需真实 TF |
 
-交替开关 RAW / Inflated，从俯视和侧视检查起飞竖直通道、各 Planner 段与直控段的可用性，以及 I 下方降落区；膨胀地图不应把悬停点或目标包住。地图不在视野内时调 `Views → Current → Focal Point` 到 EKF 的 world 坐标，**不要改 frame 或发假 TF** 把它拉回屏幕。
+交替开关 RAW / Inflated，从俯视和侧视检查起飞竖直通道、各 Planner 段与直控段的可用性，以及 J 下方降落区；膨胀地图不应把悬停点或目标包住。地图不在视野内时调 `Views → Current → Focal Point` 到 EKF 的 world 坐标，**不要改 frame 或发假 TF** 把它拉回屏幕。
 
 注意：地图显示正常**不证明**路径可达或可安全起飞；实时看图用 `live_obstacle_map.rviz`，历史包回放用 `flight_replay.rviz`（手册第 12 节，独立 master）。
 
@@ -205,7 +205,7 @@ rosservice call /mavros/param/get "{param_id: 'PWM_AUX_DIS6'}"   # 必须是 500
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py 
 ```
 
-核对打印出的 A 原点与 B/C/D/E/F/G/H/I 的 **world** 坐标和 RViz 一致；确认没有提前手动起飞。有 `measured: false` 的占位航点时 `--execute` 会被拒绝，必须实测后改 `true`。
+核对打印出的 A 原点与 B/C/D/E/F/G/H/I/J 的 **world** 坐标和 RViz 一致；确认没有提前手动起飞。有 `measured: false` 的占位航点时 `--execute` 会被拒绝，必须实测后改 `true`。
 
 预检进程退出后，在同一终端执行：
 

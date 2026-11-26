@@ -28,9 +28,47 @@ class LoadPointsTest(unittest.TestCase):
 
     def test_reads_shipped_config(self):
         points = core.load_points(CONFIG)
-        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'):
+        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
             self.assertIn(label, points)
-        self.assertEqual(points['I']['xyz'][2], 0.8)
+        self.assertEqual(points['J']['xyz'][2], 0.8)
+        self.assertEqual(points['I']['mirror'], 'F')
+        self.assertEqual(points['I']['mirror_offset'], [-0.35, 0.0])
+        self.assertEqual(core.mirror_link(points, 'F'), ('I', -0.35, 0.0))
+        self.assertEqual(core.mirror_link(points, 'I'), ('F', 0.35, 0.0))
+        self.assertEqual(points['E']['mirror'], 'C')
+        self.assertEqual(points['E']['mirror_offset'], [0.60, 0.0])
+        self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
+        self.assertEqual(core.mirror_link(points, 'E'), ('C', -0.6, 0.0))
+
+    def test_mirror_is_bidirectional(self):
+        points = {'F': dict(xyz=[1.0, 2.0, 0.8], mirror=None),
+                  'I': dict(xyz=[1.0, 2.0, 0.8], mirror='F')}
+        self.assertEqual(core.mirror_of(points, 'I'), 'F')
+        self.assertEqual(core.mirror_of(points, 'F'), 'I')
+        self.assertIsNone(core.mirror_of(points, 'A'))
+
+    def test_mirror_offset_links_c_and_e(self):
+        points = {'C': dict(mirror=None, mirror_offset=[0.0, 0.0]),
+                  'E': dict(mirror='C', mirror_offset=[0.6, 0.0])}
+        self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
+        self.assertEqual(core.mirror_link(points, 'E'), ('C', -0.6, 0.0))
+
+    def test_capture_updates_mirror_without_touching_yaw(self):
+        text = ('points:\n'
+                '  F: {xyz: [1.0, 2.0, 0.8], yaw_deg: 90.0, z_offset: 0.0}\n'
+                '  I: {xyz: [1.0, 2.0, 0.8], yaw_deg: 180.0, z_offset: 0.0, mirror: F}\n')
+        updated = core.update_point_line(text, 'F', 1.5, 2.5, 0.03, measured=True)
+        updated = core.update_point_line(updated, 'I', 1.5, 2.5, 0.03, measured=True)
+        path = Path('/tmp/gcs_console_mirror_capture.yaml')
+        path.write_text(updated, encoding='utf-8')
+        points = core.load_points(path)
+        self.assertEqual(points['F']['xyz'][:2], [1.5, 2.5])
+        self.assertEqual(points['I']['xyz'][:2], [1.5, 2.5])
+        self.assertAlmostEqual(points['F']['z_offset'], 0.03)
+        self.assertAlmostEqual(points['I']['z_offset'], 0.03)
+        self.assertEqual(points['F']['yaw_deg'], 90.0)
+        self.assertEqual(points['I']['yaw_deg'], 180.0)
+        self.assertEqual(points['I']['mirror'], 'F')
 
     def test_reads_sample(self):
         path = Path('/tmp/gcs_console_sample.yaml')

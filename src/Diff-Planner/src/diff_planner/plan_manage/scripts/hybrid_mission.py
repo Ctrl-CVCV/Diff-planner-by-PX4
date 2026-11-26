@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Automatic takeoff; planner through B to C; direct PX4Ctrl to D; planner to E and F;
-direct PX4Ctrl to G and H; planner back to I; hover, descend close to the ground, then land.
+"""Automatic takeoff; planner through B to C; direct PX4Ctrl to D and E; planner to F and G;
+direct PX4Ctrl to H and I (pass-through); planner back to J; hover, descend close to the ground, then land.
 
-Planner legs: A->B, B->C, D->E, E->F, H->I. Direct PX4Ctrl legs: C->D, F->G, G->H.
-B, C, D, E, F and G dwell mission/arrival_dwell (3 s) after arrival; I dwells
-mission/hover_seconds before landing.
+Planner legs: A->B, B->C, E->F, F->G, I->J. Direct PX4Ctrl legs: C->D, D->E, G->H, H->I.
+B, C, D, E, F, G and H dwell mission/arrival_dwell (3 s) after arrival; I is a
+pass-through waypoint (switch to the next leg within mission/pass_radius, no dwell);
+J dwells mission/hover_seconds before landing.
 
-H is a pass-through waypoint: the next goal is sent as soon as the vehicle enters
+I is a pass-through waypoint: the next goal is sent as soon as the vehicle enters
 mission/pass_radius around it, without a dwell, while the script keeps tracking the
 previous direct reference instead of freezing at the waypoint.
 
@@ -21,7 +22,7 @@ hover_seconds 秒且投票确认"危险品"后，降到离地 height，执行 ha
 再爬回该航点高度。到点后最多等 wait_timeout 秒，超时只告警并继续。
 
 救援物资（rescue_drop/enabled，默认开启但 dry_run=true，可用 --no-rescue-drop 关）：
-E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
+F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
 用完即止。dry_run=true 时只降高度、不调用舵机，用于当前测试阶段。
 
 航点地面高度误差（points/<航点>/z_offset，单位米，默认 0）：实际地面不平，各点相对起飞
@@ -29,7 +30,7 @@ E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 顺�
 的离地高度），使离地间隙与设定一致。
 
 Before landing the script descends under position control to landing/approach_height
-above the takeoff ground (x, y still commanded to I) and only then asks PX4Ctrl to land,
+above the takeoff ground (x, y still commanded to J) and only then asks PX4Ctrl to land,
 so the AUTO_LAND ramp starts from a pose that is already the landing pose.
 Offline by default.
 """
@@ -184,13 +185,18 @@ def mission_legs():
         # C 接在 B 之后：等待 C 轨迹期间继续转发上一条 Planner 指令（B 的悬停），不中断控制。
         dict(target='C', mode='planner', bridge='planner'),
         dict(target='D', mode='direct'),
-        dict(target='E', mode='planner'),
-        # F 是 Planner 与直控的切换点：到点后同样稳定悬停，再开始直控。
+        # E（2026-11-25 新增）：D→E 需要避障，改为纯 PX4Ctrl 直控（坐标同 C，机头 270°）。
+        # 2026-11-25 实飞教训：E 若当经过点，直控未停稳就切 Planner，起点带速度/未转到 270°，
+        # 第一段轨迹被速度检查连拒、A* 起点报错，随后 Emergency stop。
+        # 因此 E 按普通航点到点连续稳定悬停 arrival_dwell（3 s）后再发 F。
+        dict(target='E', mode='direct'),
         dict(target='F', mode='planner'),
-        dict(target='G', mode='direct'),
-        # H 也是经过点：进入 pass_radius 就发 I 目标；等待期间继续跟踪 G→H 的直控参考。
-        dict(target='H', mode='direct', pass_through=True),
-        dict(target='I', mode='planner'),
+        # G 是 Planner 与直控的切换点：到点后同样稳定悬停，再开始直控。
+        dict(target='G', mode='planner'),
+        dict(target='H', mode='direct'),
+        # I 也是经过点：进入 pass_radius 就发 J 目标；等待期间继续跟踪 H→I 的直控参考。
+        dict(target='I', mode='direct', pass_through=True),
+        dict(target='J', mode='planner'),
     )
 
 
@@ -702,8 +708,8 @@ class Mission:
         return self.payload_settings('hazard_drop', ('C', 'D'), once_default=True)
 
     def rescue_settings(self):
-        """救援物资投放参数（E/F/G），once 默认 false：各点独立判断。"""
-        return self.payload_settings('rescue_drop', ('E', 'F', 'G'), once_default=False)
+        """救援物资投放参数（F/G/H），once 默认 false：各点独立判断。"""
+        return self.payload_settings('rescue_drop', ('F', 'G', 'H'), once_default=False)
 
     @staticmethod
     def box_center(detection):
@@ -905,7 +911,7 @@ class Mission:
     def request_recognition(self, point):
         """到达需要识别的航点时发送一次 /yolo/enable。
 
-        C/D 发 false，只做一次危险品识别；E/F/G 发 true，只做一次人像识别。
+        C/D 发 false，只做一次危险品识别；F/G/H 发 true，只做一次人像识别。
         同一个航点重复进入悬停不再发送。
         """
         if getattr(self, '_recognition_point', None) == point:
@@ -936,7 +942,7 @@ class Mission:
     def plan_for(self, point):
         """该航点适用的投放计划：('hazard_drop'|'rescue_drop', values) 或 None。
 
-        两组航点（C/D 与 E/F/G）互不重叠；同时满足时以危险品优先。
+        两组航点（C/D 与 F/G/H）互不重叠；同时满足时以危险品优先。
         """
         hazard = self.drop_settings()
         if hazard['enabled'] and point in hazard['points']:
@@ -1244,10 +1250,12 @@ class Mission:
             raise FlightError('Planner 正在输出旧轨迹；请重启隔离 Planner 后再试')
         self.config, self.safety = resolved, safety
         self.origin = tuple(position)
-        self.ros.loginfo('起飞原点 world=%s；实际 world 目标：hover=%s, B=%s(悬停), C=%s, D=%s, E=%s, F=%s(切换点), G=%s, H=%s(经过点), I=%s(终点)；轴方向与 yaw 仍按 world',
+        self.ros.loginfo('起飞原点 world=%s；实际 world 目标：hover=%s, B=%s(悬停), C=%s, D=%s, E=%s, F=%s, '
+                         'G=%s(切换点), H=%s, I=%s(经过点), J=%s(终点)；轴方向与 yaw 仍按 world',
                          self.origin, hover['xyz'], resolved['points']['B']['xyz'], resolved['points']['C']['xyz'],
                          resolved['points']['D']['xyz'], resolved['points']['E']['xyz'], resolved['points']['F']['xyz'],
-                         resolved['points']['G']['xyz'], resolved['points']['H']['xyz'], resolved['points']['I']['xyz'])
+                         resolved['points']['G']['xyz'], resolved['points']['H']['xyz'],
+                         resolved['points']['I']['xyz'], resolved['points']['J']['xyz'])
         return position, velocity, yaw
 
     def takeoff(self):
@@ -1499,7 +1507,7 @@ class Mission:
     def run(self):
         position, _, yaw = self.takeoff()
         self.active = True
-        # H 是经过点：进入 pass_radius 就发下一段，不悬停。B 现在会悬停 arrival_dwell 秒。
+        # I 是经过点：进入 pass_radius 就发下一段，不悬停。B 现在会悬停 arrival_dwell 秒。
         legs = mission_legs()
         if legs[-1].get('pass_through'):
             raise FlightError('最后一个航点不能设置为经过点', True)
@@ -1596,7 +1604,7 @@ class Mission:
             # 位移看门狗只在"规划器确实在指挥飞机运动"时才有意义。规划器紧急停止、目标点被地图
             # 占据判为不可达、或轨迹已到头时，它会给一条停在原地的参考轨迹并保持；这时报
             # "目标发出后 3.0s 内无有效位移"会把规划器的问题说成飞机的问题（2026-10-31 两次：
-            # B→C 被速度检查连拒后急停；F 点距实测障碍仅 0.13m，Planner 停在 0.18m 外不再给参考）。
+            # B→C 被速度检查连拒后急停；G 点距实测障碍仅 0.13m，Planner 停在 0.18m 外不再给参考）。
             # 判据看**指令位置**而不是指令速度：紧急停止/到头的轨迹速度本来就是 0，
             # 而"参考在推进、飞机没跟上"才是真的跟踪故障，那个人仍交给 motion_timeout 看门狗。
             # WAIT_PLANNER_* 阶段不设看门狗：planner_first_command_timeout 已覆盖"没收到新轨迹"。
@@ -1833,9 +1841,9 @@ def main(argv=None):
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--check', action='store_true', help='地面未解锁时只读检查程控起飞条件，不发飞行指令')
     action.add_argument('--execute', action='store_true', help='实机执行，默认仅离线显示配置')
-    parser.add_argument('--map-verified', action='store_true', help='人工确认 A→B、B→C、D→E、E→F、H→I 地图正确')
+    parser.add_argument('--map-verified', action='store_true', help='人工确认 A→B、B→C、E→F、F→G、I→J 地图正确')
     parser.add_argument('--direct-path-verified', action='store_true',
-                        help='人工确认 C→D、F→G、G→H 直控路径和 I 下方降落区无障碍')
+                        help='人工确认 C→D、D→E、G→H、H→I 直控路径和 J 下方降落区无障碍')
     parser.add_argument('--hazard-drop', dest='hazard_drop', action='store_true', default=None,
                         help='启用危险品投放（覆盖 hazard_drop/enabled；默认跟随配置）')
     parser.add_argument('--no-hazard-drop', dest='hazard_drop', action='store_false', default=None,
@@ -1852,7 +1860,7 @@ def main(argv=None):
             config.setdefault('hazard_drop', {})['enabled'] = args.hazard_drop
         if args.rescue_drop is not None:
             config.setdefault('rescue_drop', {})['enabled'] = args.rescue_drop
-        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'):
+        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
             point = config['points'][label]
             xyz = point['xyz']
             yaw = point.get('yaw_deg')
@@ -1869,7 +1877,7 @@ def main(argv=None):
         parser.error('参数无效：' + str(error))
     pending = unmeasured_points(config)
     if config.get('coordinate_mode', 'world') == 'takeoff_relative':
-        print('A=[0,0,0] 为确认后锁定的地面起飞原点；B/C/D/E/F/G/H/I 相对该原点，轴方向平行 %s。' % config['frame_id'])
+        print('A=[0,0,0] 为确认后锁定的地面起飞原点；B/C/D/E/F/G/H/I/J 相对该原点，轴方向平行 %s。' % config['frame_id'])
         print('起飞悬停位置相对 A=%s；脚本仅将坐标平移到 world，不重置 EKF/TF。' % hover_point(config)['xyz'])
     else:
         print('坐标为 %s 下绝对米制坐标，A 为起飞后的悬停点。' % config['frame_id'])
@@ -1883,14 +1891,15 @@ def main(argv=None):
              safety.get('ekf_error_window', 30.0), safety.get('ekf_error_limit', 0)))
     print(json.dumps(config['points'], ensure_ascii=False, indent=2))
     print('程控原地起飞 %.2fm → 起飞悬停点稳定 %.1fs → Planner 到 B 并悬停 %.1fs → Planner 到 C 并悬停 %.1fs'
-          ' → 纯 PX4Ctrl 到 D 并悬停 %.1fs → Planner 到 E 并悬停 %.1fs → Planner 到 F 并悬停 %.1fs'
-          ' → 纯 PX4Ctrl 到 G 并悬停 %.1fs → 纯 PX4Ctrl 到 H（经过点，不悬停）'
-          ' → Planner 到 I（终点）并悬停 %.1fs → 降到离地 %.2fm → 降落。' %
+          ' → 纯 PX4Ctrl 到 D 并悬停 %.1fs → 纯 PX4Ctrl 到 E 并悬停 %.1fs'
+          ' → Planner 到 F 并悬停 %.1fs → Planner 到 G 并悬停 %.1fs'
+          ' → 纯 PX4Ctrl 到 H 并悬停 %.1fs → 纯 PX4Ctrl 到 I（经过点，不悬停）'
+          ' → Planner 到 J（终点）并悬停 %.1fs → 降到离地 %.2fm → 降落。' %
           (config['takeoff']['height'], config['takeoff']['hover_seconds'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
-           config['mission']['hover_seconds'],
+           config['mission']['arrival_dwell'], config['mission']['hover_seconds'],
            config.get('landing', {}).get('approach_height', 0.0)))
     def describe_steps(steps):
         items = []
@@ -1971,8 +1980,8 @@ def main(argv=None):
         if not args.execute:
             rospy.loginfo('只读检查通过：不解锁、不起飞、不发目标/位置指令/降落请求')
             return 0
-        print('警告：确认后将自动切 OFFBOARD、解锁并起飞！起飞垂直通道和 C→D、F→G、G→H 直控段不做 Planner 避障。定位断更时不会盲目降落；飞手必须可立即接管。')
-        if input('确认 A/B/C/D/E/F/G/H/I、坐标系、航向和 I 降落区，输入 MISSION：').strip() != 'MISSION':
+        print('警告：确认后将自动切 OFFBOARD、解锁并起飞！起飞垂直通道和 C→D、D→E、G→H、H→I 直控段不做 Planner 避障。定位断更时不会盲目降落；飞手必须可立即接管。')
+        if input('确认 A/B/C/D/E/F/G/H/I/J、坐标系、航向和 J 降落区，输入 MISSION：').strip() != 'MISSION':
             print('已取消，未发送飞行指令。')
             return 0
         mission.run()
