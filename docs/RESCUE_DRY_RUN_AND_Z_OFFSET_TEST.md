@@ -1,7 +1,10 @@
 # 救援物资无投放测试与航点高度补偿操作手册
 
-> 更新：2026-11-14
+> 更新：2026-11-26
 > 适用：`hybrid_mission.py` 的 `rescue_drop`（dry_run）与 `points/*/z_offset`
+> **注意：出厂配置自 2026-11-26 起已是 `dry_run: false`（真实投放）。本手册是
+> "只降高度、不投放"的回归测试流程，执行前需把 `rescue_drop/dry_run` 临时改回
+> `true`，测完再改回 `false`；否则按第 2 节的配置与日志关键字都对不上。**
 > 相关实现说明：`docs/HYBRID_PLANNER_PX4CTRL_MISSION.md` 第 12、13 节
 > **状态：只通过离线单元测试，尚未实飞验证。首次测试请按本手册逐项核对。**
 
@@ -18,7 +21,7 @@
 ```yaml
 rescue_drop:
   enabled: true
-  dry_run: true        # 当前测试模式：不推舵机
+  dry_run: true        # 本测试才改回 true；出厂值为 false（真实投放）
   once: false          # F、G、H 各自独立判断
   points: [F, G, H]
   label: 救助人员
@@ -85,8 +88,8 @@ rostopic echo -n 1 /yolo/detections
 
 `hazard_drop` 默认也是开启的，预检会要求它的投放服务 `/servo3/push` 可用。**本轮只测救援
 降高度、不做危险品投放时，执行和预检都加 `--no-hazard-drop`**，这样不会等舵机服务、
-也不会在 C/D 触发投放。救援的 `dry_run: true` 不要求舵机服务，预检不会检查
-`/servo4/push` 等。
+也不会在 C/D 触发投放。本轮把救援 `dry_run` 临时改回 `true` 后不要求舵机服务，
+预检不会检查 `/servo4/push` 等；出厂值 `dry_run: false` 时预检会强制要求四路舵机在线。
 
 ### 3.3 离线预览（不需要 ROS）
 
@@ -280,7 +283,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 | 想改什么 | 改哪里 | 说明 |
 | --- | --- | --- |
 | 临时关闭救援测试 | 命令行加 `--no-rescue-drop` | 不订阅检测、不降高度 |
-| 正式投放（以后） | `rescue_drop/dry_run: false` | 测试通过后再改 |
+| 正式投放（当前出厂值） | `rescue_drop/dry_run: false` | 2026-11-26 已启用；须先启动 px4_servo |
 | 哪些点允许触发 | `rescue_drop/points` | 只允许 F/G/H |
 | 检测灵敏度 | `min_confidence` / `detection/vote_*` | 当前 `vote_mode: none`（单帧确认）；用 YOLO 时改回 `time`/`frames` 抑制误检 |
 | 检测等待时间 | `rescue_drop/wait_timeout` | 默认 15 s；「其它标识」不等满就飞往下一点 |

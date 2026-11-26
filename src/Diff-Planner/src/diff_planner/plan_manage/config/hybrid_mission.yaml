@@ -137,18 +137,19 @@ hazard_drop:
       hold: 3.0
   offset_body: [0.075, 0.0]
 
-# 救援物资（2026-11-14 起默认启用，当前 dry_run=true 只测试降高度）。
+# 救援物资（2026-11-14 起默认启用；2026-11-26 起 dry_run=false，真实投放）。
 # F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 列表顺序消耗：
 #   第 1 次 → 2 号（/servo4 → MAIN8，500→2500）
 #   第 2 次 → 先 /servo1 + /servo2（MAIN5/6）同时打到 1143 把 3/4 号下放到底层，
 #             再 /servo3（MAIN7）投放 3 号
 #   第 3 次 → 4 号（/servo4 → MAIN8）
 # 用完即止；整场只检测到一次就只投 2 号，3/4 保持在下层。
-# once: false —— 每个点独立判断；dry_run: true 时只降高度、不调用舵机。
-# 测试通过后把 dry_run 改成 false 即进入真实投放。
+# once: false —— 每个点独立判断。
+# dry_run: false 时预检会要求 /servo1../servo4 服务在线（先启动 px4_servo）；
+# 需要回归"只降高度、不投放"的测试时，临时改回 true。
 rescue_drop:
   enabled: true
-  dry_run: true
+  dry_run: false
   once: false
   points: [F, G, H]
   label: 救助人员

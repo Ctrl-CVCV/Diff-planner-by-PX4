@@ -21,9 +21,9 @@ hazard_drop/steps 与 rescue_drop/payloads 里，每一步是 {services: [...], 
 hover_seconds 秒且投票确认"危险品"后，降到离地 height，执行 hazard_drop/steps，
 再爬回该航点高度。到点后最多等 wait_timeout 秒，超时只告警并继续。
 
-救援物资（rescue_drop/enabled，默认开启但 dry_run=true，可用 --no-rescue-drop 关）：
+救援物资（rescue_drop/enabled，默认开启且 dry_run=false 真实投放，可用 --no-rescue-drop 关）：
 F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
-用完即止。dry_run=true 时只降高度、不调用舵机，用于当前测试阶段。
+用完即止。dry_run=true 时只降高度、不调用舵机，留给只降高度的回归测试。
 
 航点地面高度误差（points/<航点>/z_offset，单位米，默认 0）：实际地面不平，各点相对起飞
 原点的地面高度差可直接填在这里，任务脚本会把该偏移加到该点所有高度目标上（含投放/进近

@@ -600,18 +600,22 @@ rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"    # 识别一次救助�
 旧的 TensorRT 节点 `yolo_trt_node.py` 仍保留"电平开关"语义（`false` 停推理、`true` 恢复），
 当前 launch 用 `use_vlm:=false` 启动它，两者不能同时运行（节点名相同）。
 
-## 12. 救援物资投放（默认仍为 dry_run 测试）
+## 12. 救援物资投放（2026-11-26 起为真实投放）
 
-`rescue_drop/enabled: true`、`rescue_drop/dry_run: true`（临时关闭用 `--no-rescue-drop`）。
+`rescue_drop/enabled: true`、`rescue_drop/dry_run: false`（临时关闭整段用 `--no-rescue-drop`）。
 默认在 **F、G、H** 检测 `label: 救助人员`，判定方式与危险品相同（中心目标 + 置信度 +
 `detection` 段确认方式 + `max_age`）。2026-11-25 起 `detection/vote_mode: none`：
 **最近一帧命中即确认**（VLM 每次触发只有一个判定，再投票没有额外信息）；
 换回 TensorRT YOLO 时改回 `time` 或 `frames`，否则单帧误检会直接触发投放。
 `once: false`：三个点各自独立判断。
 
-当前阶段的 `dry_run: true` 只降到离地 `height`、保持 `push_wait`、再爬回，不调用舵机；
-日志会写明"测试模式（dry_run）"。测试通过后把 `dry_run` 改成 `false` 即按第 11 节的
-`payloads` 顺序真实投放。
+`dry_run: false` 时按第 11 节的 `payloads` 顺序真实投放；预检会要求
+`/servo1../servo4` 服务在线，**先启动 `px4_servo`（GUI「舵机控制」）再跑任务预检**，
+否则预检直接报"投放服务不可用"。
+需要回归"只降高度、不投放"的测试时，把 `dry_run` 临时改回 `true`：此时只降到离地
+`height`、保持 `push_wait`、再爬回，不调用舵机，日志写"测试模式（dry_run）"。
+注意 GUI 的「禁用救援降高度测试」勾选框对应 `--no-rescue-drop`，是**整段关闭**，
+不是切换 dry_run。
 
 注意：真实模式下，第 2 次救援触发会在同一个点执行"下放 3/4 号 + 投 3 号"两步，低空停留
 时间约为两段 `hold` 之和；这段时间飞机保持在 `height` 高度，现场要留足安全区。

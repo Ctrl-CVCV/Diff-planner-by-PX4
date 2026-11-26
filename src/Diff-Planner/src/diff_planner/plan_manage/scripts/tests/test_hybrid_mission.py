@@ -1420,7 +1420,7 @@ class HazardDrop(unittest.TestCase):
 
 
 class RescueDropAndGroundOffsetTest(unittest.TestCase):
-    """救援物资降高度测试（dry_run，不投放）与航点地面高度误差 z_offset。"""
+    """救援物资投放（默认真实投放；dry_run 可作为回归测试）与航点地面高度误差 z_offset。"""
 
     setUp = RuntimeRules.setUp
     simulate_takeoff = RuntimeRules.simulate_takeoff
@@ -1439,16 +1439,18 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         for config in (self.config, self.runner.config, self.runner.source_config):
             config['rescue_drop'].update(changes)
 
-    def test_shipped_config_is_rescue_dry_run(self):
+    def test_shipped_config_enables_real_rescue_drop(self):
         rescue = self.config['rescue_drop']
-        self.assertTrue(rescue['enabled'], '默认启用救援物资降高度测试')
-        self.assertTrue(rescue['dry_run'], '当前阶段只降高度、不投放')
+        self.assertTrue(rescue['enabled'], '默认启用救援物资投放')
+        self.assertFalse(rescue['dry_run'], '2026-11-26 起改为真实投放，预检要求舵机服务在线')
         self.assertEqual(list(rescue['points']), ['F', 'G', 'H'])
         self.assertFalse(rescue['once'], 'F/G/H 各自独立判断')
 
     def test_detection_at_f_descends_holds_and_climbs_without_push(self):
         runner = self.runner
         runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
+        # 出厂配置已改为真实投放；本用例验证 dry_run 回归测试分支不推舵机。
+        self.set_rescue(dry_run=True)
         state, trace, goals = self.simulate_full_mission(rescue='F')
         self.run_mission()
         phases = [entry[1] for entry in trace]
@@ -1466,6 +1468,7 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
     def test_detection_at_two_points_triggers_both(self):
         runner = self.runner
         runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
+        self.set_rescue(dry_run=True)
         state, trace, _ = self.simulate_full_mission(rescue=('F', 'H'))
         self.run_mission()
         starts = [index for index, entry in enumerate(trace)
