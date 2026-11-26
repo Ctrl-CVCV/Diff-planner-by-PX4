@@ -705,12 +705,42 @@ PY
 
 ## 14. YOLO 视觉识别（投放默认启用，需要它出检测）
 
-`yolo_trt_ros`（USB 相机 + TensorRT 检测，队友新增）只订阅图像、发布检测结果，**不订阅也不发布任何飞行指令话题**，与第 1～13 节的飞行链相互独立；但自 2026-10-31 起 `hazard_drop/enabled: true`，投放判定要靠它的 `/yolo/detections`。没启动时任务照飞，只是 C/D 悬停等满 `wait_timeout`(10 s) 后不投继续。启动命令、话题表、检测 JSON 字段和覆盖参数见 [最简启动文档第 7 步](HYBRID_MISSION_QUICKSTART.md#第-7-步终端-7可选yolo-视觉识别)。
+`yolo_trt_ros` 当前默认使用 USB 相机 + VLM 语义识别 + OpenCV 跟踪，**不订阅也不发布任何飞行指令话题**。任务脚本默认以 `/yolo/recognition` 的新鲜语义结论确认目标；`/yolo/detections` 保留逐帧 CV 框。没启动时 C/D、F/G/H 到点等待 `wait_timeout`（15 s）后不投继续。启动命令见 [最简启动文档第 7 步](HYBRID_MISSION_QUICKSTART.md#第-7-步终端-7可选yolo-视觉识别)，任务逻辑详见混合任务说明中的固定跟踪 3 s 一节。
 
 本手册只补充三条与本手册其余内容相关的约定：
 
-- 它占 GPU 与 3 个推理线程，**不在空中第一次启动**；先在地面跑起来，确认 `/ekf/ekf_odom`、`/Odometry` 频率和 Planner 周期没有下降再决定要不要带着飞。
-- 默认 `show_window:=true`：启动会在桌面弹出 `YOLO TensorRT` 预览窗口（10 FPS）。飞行中不需要看图就用 `show_window:=false` 启动，少占一点 GPU。
-- 第 6 节的录包器话题表固定、不含 YOLO 话题；要留检测结果就另开独立 `rosbag record`（写在 `$FLIGHT_DIR/yolo.bag`），不要改飞行包的录制命令。
+- 它与 VLM 后端共同占用计算资源，**不在空中第一次启动**；先在地面跑起来，确认 `/ekf/ekf_odom`、`/Odometry` 频率和 Planner 周期没有下降再决定要不要带着飞。
+- 默认 `show_window:=true`：启动弹出 `VLM Recognition` 预览窗口；地面启动时可设置 `show_window:=false`，通过 ROS 预览话题观察。
+- 第 6 节录包器已默认包含 `/yolo/enable`、`/yolo/recognition`、`/yolo/detections`；图像仍需另录，避免默认写入高带宽图像。当前 VLM 流程为：语义确认 → CV 跟踪固定 3 s（丢框不重置）→ 下降投放；参数与保护见任务说明中的 `confirmation_source/tracking_seconds`。
 
 参数和状态机细节见 [混合任务说明](HYBRID_PLANNER_PX4CTRL_MISSION.md)；地图细节见 [地图检查](OBSTACLE_MAP_CHECK.md)；历史故障证据见 [文档总入口](README.md)。
+
+## 15. E→F 紧急停止录包复核（2026-11-26）
+
+核对文件：`~/flight_logs/console_19700101_082535/flight_0.bag`，时长约 99.84 s。
+该录包使用了复位后的系统时钟，目录中的 1970 **不是实际飞行日期**；以下均为相对录包开头的秒数。
+不要只按文件修改时间选择最新包。同目录后的 `console_19700101_082616` 是另一个地面预检失败包，
+其中缺少 `/servo/push` 的报错不能当成本次空中降落原因。
+
+| 相对时间 | 证据 |
+| --- | --- |
+| 42.12 s | D 点开始 `DROP_DESCEND`，随后已完成投放阶段和回升 |
+| 70.38 s | E 点悬停结束，任务请求 Planner 飞往 F |
+| 70.43–70.76 s | 24 条速度可行性拒绝：候选轨迹峰值 0.610269–0.660224 m/s，高于接受上限 0.61 m/s；其间还出现 A* 起/终点调整后越出地图的日志 |
+| 70.78 s | `replan fail too much. Emergency stop.`，规划失败计数超过阈值，Planner 发停止/悬停轨迹 |
+| 72.82 s | 任务检测到 Planner 静止指令持续约 2 s，实测距 F 约 1.90 m，终止任务 |
+| 72.87 s | 任务进入 `LANDING` 并发送一次 `TakeoffLand.LAND`（值 2） |
+| 85.70 s | `DONE`；降落用时约 12.8 s |
+
+结论：**这一包的链路是规划连续失败 → Planner 急停 → 任务静止指令看门狗触发 → PX4Ctrl 降落**，
+不是 VLM 丢框直接命令降落。这里的 0.61–0.66 m/s 是被拒绝的候选轨迹速度，不是飞机实测超速；
+事件附近 69–73 s 的 EKF 速度峰值约 0.084 m/s。录制参数为
+`optimization/max_vel=0.24`、`vel_tolerance=0.37`，故接受上限为 0.61。
+
+A* 日志来自占据点向外调整后越界，不能仅凭这句话认定实际 F 点在地图外或被障碍占据。
+紧靠发目标之前的可视化膨胀云中，E/F 到最近体素中心距离约 0.293/0.210 m；
+这也不是对整条通道无碰撞的证明。继续定位应检查优化候选、障碍分布及可行性约束，
+不要直接关闭碰撞检查、急停或无运动保护，也不要未经验证继续放宽速度上限。
+
+这个旧包已包含原始占据图和膨胀图，但**没有 `/yolo/*`**，因此无法从此包还原视觉识别和丢框过程。
+更新后的录包器会记录触发、语义结果和 CV 检测，图像需要时仍单独录制。

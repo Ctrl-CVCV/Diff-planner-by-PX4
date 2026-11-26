@@ -10,24 +10,22 @@ controller_node: /px4ctrl
 points:
   A: {xyz: [0.0, 0.0, 0.0], yaw_deg: 0.0}
   B: {xyz: [1.75, 0.00, 0.8], yaw_deg: 0.0, z_offset: -0.059, measured: true}
-  C: {xyz: [0.463, 1.495, 0.80],yaw_deg: 180.0, z_offset: 0.002, measured: true}
-  D: {xyz: [-0.002, 1.489, 0.8], yaw_deg: 180.0, z_offset: 0.005, measured: true}
+  C: {xyz: [0.455, 1.507, 0.80],yaw_deg: 180.0, z_offset: -0.008, measured: true}
+  D: {xyz: [-0.004, 1.498, 0.8], yaw_deg: 180.0, z_offset: -0.025, measured: true}
   # E（2026-11-26 调整）：D→E 纯 PX4Ctrl 直控；x = C.x + 0.6m，y/z 与 C 相同，
   # 机头 90°（转向后 F 在视野内）。这里视野更开阔，避开 C 点附近的膨胀障碍。
   # mirror: C + mirror_offset [0.6, 0]：GUI 打点时 E 始终保持在 C 的 +x 0.6m，
   # 写 C 会同步 E，写 E 会反推 C；z_offset 一起同步，yaw 不动。
   # E 到点后要连续稳定悬停 arrival_dwell（3 s）再发 F：直飞中途切 Planner 会导致急停。
-  E: {xyz: [1.063, 1.495, 0.80], yaw_deg: 90.0, z_offset: 0.002, measured: true, mirror: C, mirror_offset: [0.60, 0.0]}
+  E: {xyz: [1.055, 1.507, 0.80], yaw_deg: 90.0, z_offset: -0.008, measured: true, mirror: C, mirror_offset: [0.60, 0.0]}
   # F、G 由 Planner 飞；G 是 Planner → 直控的切换点，到点悬停 arrival_dwell 秒后切直控。
   # F、G、H 都可能出现"救助人员"，z_offset 要逐点实测填写。
-  F: {xyz: [1.989, 2.733, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.010}
-  G: {xyz: [1.162, 2.736, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.010}
+  F: {xyz: [1.982, 2.722, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.015}
+  G: {xyz: [1.150, 2.726, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.010}
   # H、I 由普通 PX4Ctrl 直控；I 是经过点，不悬停。
-  # I = F.x - 0.35m（y/z 同 F），避开 F 附近的膨胀障碍。
-  # mirror: F + mirror_offset [-0.35, 0]：GUI 打点写 F 或 I 时保持这个相对位置，
-  # z_offset 同步，yaw 不动。
-  H: {xyz: [2.756, 2.739, 0.8], yaw_deg: 90.0, measured: true, z_offset: -0.008}
-  I: {xyz: [1.639, 2.733, 0.8], yaw_deg: 180.0, measured: true, z_offset: -0.010, mirror: F, mirror_offset: [-0.35, 0.0]}
+  # I 独立打点，不再与 F 联动；分别记录各自的 x/y 和 z_offset，yaw 不动。
+  H: {xyz: [2.742, 2.715, 0.8], yaw_deg: 90.0, measured: true, z_offset: 0.043}
+  I: {xyz: [1.652, 2.843, 0.8], yaw_deg: 270.0, measured: true, z_offset: 0.016}
   # J 是终点：回到 起点上方，航向与起飞时相反（180°）。z 用飞行高度 0.8，不能填地面 0。
   # y=-0.10 是实测落点左偏的经验补偿：world y 指向起飞航向的左侧，取 -0.10 即向右挪 10cm。
   # 这个值按实测落点偏差调整，不是原始测量坐标；改完仍会按 landing/target_tolerance 收敛后再降落。
@@ -74,6 +72,9 @@ landing:
 # 投放；比例按现场相机画面调整，单项限制在 0..0.45，默认各 0.25（即 cy 在
 # 0.25H..0.75H 之间才算有效）。
 detection:
+  # vlm：语义结论只接收 /yolo/recognition；CV 框不能代替一次新的 VLM 确认。
+  # 切回 TensorRT YOLO 时改成 detections，并把 vote_mode 改回 time/frames。
+  confirmation_source: vlm
   exclude_top_ratio: 0.25
   exclude_bottom_ratio: 0.25
   # 目标确认方式（危险品/救援共用；各投放段内写同名键可单独覆盖）：
@@ -87,17 +88,17 @@ detection:
   #   vote_window: 时间窗宽度（秒），仅 time 模式生效。
   #   vote_frames: frames 模式=窗口帧数；time 模式=窗口内最少投票数。
   #   vote_ratio:  time/frames 共用的命中比例阈值。
-  # stable_seconds：确认后还要连续稳定命中多久才允许下降投放（秒）。VLM 方案要求框先
-  # 稳定标注 3 s 再下降；检测断更超过 max_age 会重新计时。0 = 关闭该等待。
-  stable_seconds: 3.0
+  # tracking_seconds：首次确认后固定跟踪多久再下降；丢框、检测断更不重置或取消。
+  # VLM 结论经 /yolo/recognition 独立发送，不依赖 CV 框。飞控/定位保护仍生效。
+  tracking_seconds: 3.0
   vote_mode: none
   vote_window: 0.5
   vote_frames: 5
   vote_ratio: 0.60
 
 # 物资投放机构（px4_servo 四路，实际接口为 PWM_MAIN5..8）：
-#   逻辑 1 号输出 / MAIN5（1143）：下放 3/4 号物资到底层；
-#   逻辑 2 号输出 / MAIN6（1143）：与 1 号同步下放；
+#   逻辑 1 号输出 / MAIN5（1800）：下放 3/4 号物资到底层；
+#   逻辑 2 号输出 / MAIN6（1800）：与 1 号同步下放；
 #   逻辑 3 号输出 / MAIN7（2500）：投放 1 号（消防）、3 号（救援）；
 #   逻辑 4 号输出 / MAIN8（2500）：投放 2 号（救援）、4 号（救援）。
 #   服务前缀 /servo1../servo4 对应上面四路逻辑输出；动作后舵机 hold_s 自动回 500。
@@ -116,11 +117,11 @@ hazard_drop:
   label: 危险品             # 检测标签按子串匹配；YOLO label_names 里叫 "危险品标识"
   min_confidence: 0.70      # 单帧最低置信度（YOLO 节点自身已按 conf_thres=0.60 过滤）
   # 单帧里可能出现多个图案：只认"离图像中心最近的那一个"（无人机悬在投放目标正上方），
-  # 再判它是不是 label、置信度够不够。是否确认真危险品由 detection 段的投票窗口决定；
+  # 再判它是不是 label、置信度够不够。VLM 模式只认独立语义结果；TensorRT 模式按投票确认。
   # 需要单独覆盖时在本段写 vote_mode/vote_window/vote_frames/vote_ratio 同名键。
   hover_seconds: 3.0        # 到点后连续稳定悬停多久才允许下降（与 arrival_dwell 一致）
   # 到点后最多等多久检测；超时告警并按原任务流继续。
-  # 2026-11-25：8.0 → 15.0。VLM 单次识别约 5–7.5 s，确认后连续发布约 4 s；
+  # 2026-11-25：8.0 → 15.0。VLM 单次识别约 5–7.5 s，确认后固定跟踪 3 s；
   # 15 s 只留给“还没有结果”或请求失败。识别为其它标识时立即飞往下一点。
   wait_timeout: 15.0
   height: 0.15              # 下降到离地高度（米，相对起飞原点）
@@ -140,7 +141,7 @@ hazard_drop:
 # 救援物资（2026-11-14 起默认启用；2026-11-26 起 dry_run=false，真实投放）。
 # F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 列表顺序消耗：
 #   第 1 次 → 2 号（/servo4 → MAIN8，500→2500）
-#   第 2 次 → 先 /servo1 + /servo2（MAIN5/6）同时打到 1143 把 3/4 号下放到底层，
+#   第 2 次 → 先 /servo1 + /servo2（MAIN5/6）同时打到 1800 把 3/4 号下放到底层，
 #             再 /servo3（MAIN7）投放 3 号
 #   第 3 次 → 4 号（/servo4 → MAIN8）
 # 用完即止；整场只检测到一次就只投 2 号，3/4 保持在下层。
@@ -156,7 +157,7 @@ rescue_drop:
   min_confidence: 0.70
   # 投票参数默认取 detection 段；需要单独覆盖时在本段写同名键。
   hover_seconds: 3.0
-  # 与 hazard_drop 同步：15 s（VLM 约 5–7.5 s，再加约 4 s 连续发布）
+  # 与 hazard_drop 同步：未确认最多等 15 s；确认后的 3 s 跟踪不被此超时取消。
   wait_timeout: 15.0
   height: 0.15
   speed: 0.15
@@ -263,6 +264,7 @@ topics:
   # YOLO 检测结果（std_msgs/String，JSON：detections[].label/confidence）。
   # 危险品或救援投放启用时才订阅。
   detections: /yolo/detections
+  recognition: /yolo/recognition
   # 单次识别触发（std_msgs/Bool）。到达 C/D 发 false，做一次危险品识别；
   # 到达 F/G/H 发 true，做一次人像识别。不是持续开关。
   yolo_enable: /yolo/enable

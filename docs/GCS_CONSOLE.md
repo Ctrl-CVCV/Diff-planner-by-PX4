@@ -36,7 +36,8 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/gcs_conso
 - **PX4 状态**：connected / armed / mode；
 - **PX4Ctrl 状态**：MANUAL_CTRL / AUTO_HOVER / CMD_CTRL / AUTO_TAKEOFF / AUTO_LAND；
 - **任务阶段**：来自 `/drone_0_mission/state`；
-- **告警框**：最近 12 条，来源有两类：
+- **告警框（2026-11-26 起分两栏）**：**警告 WARN** 和 **错误 ERROR** 各占一栏、各自
+  保留最近 12 条，避免飞控未解锁时刷屏的舵机警告把真正的报错挤出窗口。来源有两类：
   1. `/rosout` 里 WARN / ERROR 级别的日志（含各节点报错，如 Planner 拒轨迹、EKF 断言）；
   2. 内置异常检测：EKF 位姿 NaN、位置跳变（>1.5 m/s 黄色、>3 m/s 红色）、
      速度超限、EKF-LIO 偏差过大。同类告警 3 秒内只记一次，避免刷屏。
@@ -120,8 +121,9 @@ bash ~/gcs_ws/src/livox_ros_driver2/scripts/start_fastlio2_ekf.sh
      x / y / z_offset 一起更新，yaw 保持原值。当前有：
      - **C ↔ E**：E 带 `mirror_offset: [0.60, 0.0]`，始终保持在 C 的 +x 0.6 m；
        打 C 会同步 E，打 E 会反推 C；
-     - **F ↔ I**：I 带 `mirror_offset: [-0.35, 0.0]`，始终保持在 F 的 −x 0.35 m；
-       打 F 会同步 I，打 I 会反推 F（F 90°/I 180°）。
+     - **F、I 独立记录**：I 不再配置 `mirror` / `mirror_offset`；打 F 不更新 I，
+       打 I 不更新 F，各自记录 x/y/z_offset，yaw 保持原值（F 90°/I 180°）。
+       已打开的地面站需在地面停止任务后重新启动以加载新配置；旧任务副本需同步移除 I 的联动字段。
 
 > 说明：z_offset 的语义是"该点地面/实测高度相对配置高度的偏差"，正数表示已记录的
 > 实测高度比配置高。打点时请让飞机稳定悬停在该点上方再点，否则记录的会是过渡位置。

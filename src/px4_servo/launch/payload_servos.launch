@@ -1,7 +1,7 @@
 <launch>
   <!-- 四路物资舵机（I/O PWM OUT = PWM_MAIN 5..8，2026-11-20 校对）：
-         逻辑 1 号输出 -> MAIN5：1143 µs —— 下放 3、4 号物资到底层，动作后自动回 500；
-         逻辑 2 号输出 -> MAIN6：1143 µs —— 与 1 号同步下放；
+         逻辑 1 号输出 -> MAIN5：1300 µs —— 下放 3、4 号物资到底层，动作后自动回 500；
+         逻辑 2 号输出 -> MAIN6：1300 µs —— 与 1 号同步下放；
          逻辑 3 号输出 -> MAIN7：2500 µs —— 投放 1 号（消防）、3 号（救援）；
          逻辑 4 号输出 -> MAIN8：2500 µs —— 投放 2 号（救援）、4 号（救援）。
 
@@ -28,7 +28,7 @@
     <param name="channel" value="5"/>
     <param name="param_prefix" value="$(arg param_prefix)"/>
     <param name="rest_us" value="$(arg rest_us)"/>
-    <param name="push_us" value="1143.0"/>
+    <param name="push_us" value="1300.0"/>
     <param name="hold_s" value="$(arg hold_s)"/>
     <param name="arming_gate" value="$(arg arming_gate)"/>
     <param name="dry_run" value="$(arg dry_run)"/>
@@ -39,7 +39,7 @@
     <param name="channel" value="6"/>
     <param name="param_prefix" value="$(arg param_prefix)"/>
     <param name="rest_us" value="$(arg rest_us)"/>
-    <param name="push_us" value="1143.0"/>
+    <param name="push_us" value="1300.0"/>
     <param name="hold_s" value="$(arg hold_s)"/>
     <param name="arming_gate" value="$(arg arming_gate)"/>
     <param name="dry_run" value="$(arg dry_run)"/>

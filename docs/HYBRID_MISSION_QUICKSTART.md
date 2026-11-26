@@ -264,11 +264,11 @@ roslaunch yolo_trt_ros yolo_trt.launch device:=/dev/video1 engine_path:=$HOME/yo
 - 引擎固定在 `/home/nvidia/yolo/best.engine`（检测阈值 `conf_thres` 默认 0.60，类别名由 `label_names` 参数给出，顺序即 `class_id` 0/1/2）。
 - 相机节点打不开设备会 `logfatal` 退出，检测节点随后一直等图像——看到 `/yolo/preview/image` 没数据先查 `ls -l /dev/video0` 和 `rosparam get /usb_camera`。
 - 队友改了 `yolo_trt_ros` 源码或新增了 `.engine` 才需要重编译：`cd ~/gcs_ws && catkin_make -j2`（**只在地面做**，devel 里已经编好当前版本）。
-- 终端 4 的录包器话题表是固定的（`BASE_TOPICS` + `/drone_0_*`），**不含 YOLO 话题**。要留飞行中的检测结果就另开一个终端、用独立目录并行录（`/yolo/detections` 很小，原始图像 / 预览图带宽大，先地面试一次看磁盘增长）：
+- 终端 4 的录包器现已默认包含 `/yolo/enable`、`/yolo/recognition`、`/yolo/detections`（2026-11-26 更新）。VLM 确认后固定 CV 跟踪 3 s，丢框不重置，随后按原航点下降投放；飞行健康保护保留。原始图像 / 预览图带宽大，如需图像另开终端并行录，先地面观察磁盘增长：
 
   ```bash
   export FLIGHT_DIR="$(cat "$HOME/flight_logs/current_hybrid_session.txt")"
-  rosbag record -O "$FLIGHT_DIR/yolo.bag" /yolo/detections /usb_cam/image_raw
+  rosbag record -O "$FLIGHT_DIR/yolo_images.bag" /usb_cam/image_raw /yolo/preview/image
   ```
 
 

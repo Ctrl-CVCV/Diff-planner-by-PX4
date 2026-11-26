@@ -25,6 +25,10 @@ audit = load_script('analyze_diff_planner_frames')
 
 
 class RecorderRules(unittest.TestCase):
+    def test_vlm_result_trigger_and_cv_boxes_are_recorded(self):
+        for topic in ('/yolo/enable', '/yolo/recognition', '/yolo/detections'):
+            self.assertTrue(self.matches(topic), topic)
+
     def matches(self, topic, raw=False):
         return any(re.match(pattern, topic) for pattern in recorder.topic_patterns(0, raw))
 

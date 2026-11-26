@@ -505,8 +505,8 @@ roslaunch px4_servo payload_servos.launch
 
 | 逻辑输出 | 实际接口 | 脉宽 | 服务 |
 | --- | --- | --- | --- |
-| 1 号输出（下放） | MAIN5 | 500→1143 | `/servo1/push` |
-| 2 号输出（下放） | MAIN6 | 500→1143 | `/servo2/push` |
+| 1 号输出（下放） | MAIN5 | 500→1800 | `/servo1/push` |
+| 2 号输出（下放） | MAIN6 | 500→1800 | `/servo2/push` |
 | 3 号输出 | MAIN7 | 500→2500 | `/servo3/push`（1 号消防、3 号救援） |
 | 4 号输出 | MAIN8 | 500→2500 | `/servo4/push`（2 号救援、4 号救援） |
 
@@ -581,18 +581,42 @@ rostopic pub -1 /yolo/enable std_msgs/Bool "data: true"    # 识别一次救助�
 ```
 
 送给 VLM 的是外层矩形边框，不是整帧。发布时，危险标志的矩形与三角形三个角相切，
-人像圈最外层边框。确认后按原格式发布约 4 s（`~hold_seconds`），并由 OpenCV 跟随这个矩形。
+人像圈最外层边框。确认后按原格式发布约 3 s（`~hold_seconds`），并由 OpenCV 跟随这个矩形。
 预览画面只给「危险品」（红框）和「救助人员」（蓝框）画框；「其它标识」不画框，也不在画面上
 追加"其它标识"字样，避免把无关目标当成投放目标。
 结果为「其它标识」时任务立即飞往下一点；还没有结果或请求失败时，最多等到 `wait_timeout`
 （15 s）再走。
 
-**确认后再稳定 3 秒（2026-11-26）**：`detection/stable_seconds`（默认 3.0 s）要求识别框
-连续稳定标注一段时间后才允许 `DROP_DESCEND`。计时从连续命中的第一帧开始；跟丢超过
-`max_age`（0.5 s）就清零重新计时（短暂的跟踪抖动不清零）。到新航点触发识别时，
-`request_recognition()` 会清空上一点的投票、稳定计时和「其它标识」结论。
-因此 F/G/H 的典型时间线是：到点 3 s 悬停 + 确认后约 3 s 稳定标注，约 6 s 才开始下降；
-`stable_seconds: 0` 可关闭该等待。换回 TensorRT YOLO 时也建议保留该门禁。
+**VLM 确认 → 固定跟踪 3 秒 → 下降投放（2026-11-26 更新）**：
+`detection/confirmation_source: vlm` 时，VLM 推理结束立即在 `/yolo/recognition`
+发布一次 `std_msgs/String` JSON，含 `stamp/mode/class_id/label/confidence/inference_ms`。
+这个结论不依赖 CV 是否找到框，也不需要之后还有新图像。任务只接受当前识别航点、
+相应识别模式、足够置信度、未过期且不早于本次触发的语义结果；CV 框不能代替新 VLM 结论。
+
+识别为危险品或救助人员后锁定结论，从收到该结果开始等待
+`detection/tracking_seconds: 3.0`，OpenCV 同时尝试跟踪。**丢框、空检测、检测停更均不清零
+计时，不取消已确认的投放**；结果在 `wait_timeout` 前确认，跟踪计时可以延续到该超时之后。
+没有正向确认时仍最多等待 `wait_timeout`（15 s），「其它标识」仍不投放。
+到新航点重新触发时清掉上一点的结论和跟踪计时。旧 `stable_seconds` 不再使用。
+
+到点稳定悬停的 3 s 与确认后的跟踪 3 s **可以重叠**，不是固定再加 3 s；只有两者都满足，
+才进入 `DROP_DESCEND`。RC 接管、OFFBOARD/解锁状态、定位断更/不一致、轨迹与速度保护
+仍按原逻辑执行，「丢框不管」不等于忽略飞行异常。
+CV 跟踪只用于视觉框跟随，**不根据框中心横移飞机**；下降仍按航点坐标和挂点偏移执行。
+地面确认降落通道和挂点对准后再测试。
+
+切回 TensorRT 时同时设置 `confirmation_source: detections`、`vote_mode: time` 或 `frames`；
+投票完成后同样等待固定 `tracking_seconds`，之后丢框也不取消。
+更改后须在地面重启视觉节点和任务脚本；正在运行的 Python 进程不会热更新。
+可先只读观察语义结果与 CV 框：
+
+```bash
+rostopic echo /yolo/recognition
+rostopic echo /yolo/detections
+```
+
+新录包默认同时包含 `/yolo/enable`、`/yolo/recognition`、`/yolo/detections`，
+可将语义确认、丢框、`DROP_DESCEND` 与舵机动作按时间对应。
 
 **任务执行时触发是自动的**：到达需要识别的航点、开始稳定悬停计时的那一刻，任务脚本自己
 发一次 `/yolo/enable`（C/D 发 `false`，F/G/H 发 `true`，`request_recognition()`），同一航点

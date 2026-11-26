@@ -3,6 +3,7 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,10 +32,10 @@ class LoadPointsTest(unittest.TestCase):
         for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
             self.assertIn(label, points)
         self.assertEqual(points['J']['xyz'][2], 0.8)
-        self.assertEqual(points['I']['mirror'], 'F')
-        self.assertEqual(points['I']['mirror_offset'], [-0.35, 0.0])
-        self.assertEqual(core.mirror_link(points, 'F'), ('I', -0.35, 0.0))
-        self.assertEqual(core.mirror_link(points, 'I'), ('F', 0.35, 0.0))
+        self.assertIsNone(points['I']['mirror'])
+        self.assertEqual(points['I']['mirror_offset'], [0.0, 0.0])
+        self.assertIsNone(core.mirror_link(points, 'F'))
+        self.assertIsNone(core.mirror_link(points, 'I'))
         self.assertEqual(points['E']['mirror'], 'C')
         self.assertEqual(points['E']['mirror_offset'], [0.60, 0.0])
         self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
@@ -52,6 +53,26 @@ class LoadPointsTest(unittest.TestCase):
                   'E': dict(mirror='C', mirror_offset=[0.6, 0.0])}
         self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
         self.assertEqual(core.mirror_link(points, 'E'), ('C', -0.6, 0.0))
+
+    def test_capture_records_f_and_i_independently(self):
+        original = core.load_points(CONFIG)
+        for label in ('F', 'I'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                self.assertIsNone(core.mirror_link(original, label))
+                updated = core.update_point_line(CONFIG.read_text(encoding='utf-8'),
+                                                 label, 1.5, 2.5, 0.03, measured=True)
+                path = Path(directory) / 'mission.yaml'
+                path.write_text(updated, encoding='utf-8')
+                points = core.load_points(path)
+                self.assertEqual(points[label]['xyz'][:2], [1.5, 2.5])
+                self.assertEqual(points[label]['xyz'][2], original[label]['xyz'][2])
+                self.assertEqual(points[label]['yaw_deg'], original[label]['yaw_deg'])
+                self.assertAlmostEqual(points[label]['z_offset'], 0.03)
+                self.assertTrue(points[label]['measured'])
+                self.assertIsNone(core.mirror_link(points, label))
+                for other in original:
+                    if other != label:
+                        self.assertEqual(points[other], original[other])
 
     def test_capture_updates_mirror_without_touching_yaw(self):
         text = ('points:\n'

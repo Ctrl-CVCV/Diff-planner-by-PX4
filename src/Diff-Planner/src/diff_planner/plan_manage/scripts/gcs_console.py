@@ -66,6 +66,9 @@ class RosWorker(QtCore.QThread):
         self.messages = {}
         self.nodes = {label: None for label, _ in self.NODE_SPECS}
         self.alerts = deque(maxlen=200)
+        # 警告和错误分开存，避免飞控未解锁时刷屏的舵机警告把真正的报错挤出窗口。
+        self.warns = deque(maxlen=200)
+        self.errors = deque(maxlen=200)
         self._alert_last = {}
         self._last_pose_sample = None    # (monotonic, xyz)
         self._lio_position = None        # (monotonic, xyz)
@@ -82,8 +85,9 @@ class RosWorker(QtCore.QThread):
         if now - self._alert_last.get(text, 0.0) < 3.0:
             return
         self._alert_last[text] = now
-        self.alerts.append(dict(time=time.strftime('%H:%M:%S'), level=level,
-                                node=node, text=text))
+        item = dict(time=time.strftime('%H:%M:%S'), level=level, node=node, text=text)
+        self.alerts.append(item)
+        (self.errors if level in ('ERROR', 'BAD') else self.warns).append(item)
 
     def _message_cb(self, key, message):
         now = time.monotonic()
@@ -209,7 +213,8 @@ class RosWorker(QtCore.QThread):
         return dict(pose=pose, speed=speed, divergence=divergence,
                     topics=topics, nodes=dict(self.nodes),
                     px4=px4, ctrl=control, mission_stage=self.stage,
-                    alerts=list(self.alerts)[-12:])
+                    alerts=list(self.alerts)[-24:],
+                    warns=list(self.warns)[-12:], errors=list(self.errors)[-12:])
 
     # ---------------------------------------------------------------- run
     def run(self):
@@ -477,22 +482,38 @@ class Console(QtWidgets.QMainWindow):
         chip_row.addStretch(1)
         grid.addWidget(chips, 4, 0, 1, 4)
 
-        alert_row = QtWidgets.QHBoxLayout()
-        self.alert_count = QtWidgets.QLabel('告警：0')
         clear = QtWidgets.QPushButton('清空告警显示')
-        clear.clicked.connect(lambda: self.alert_box.clear())
-        alert_row.addWidget(self.alert_count)
+        clear.clicked.connect(self._clear_alerts)
+        alert_row = QtWidgets.QHBoxLayout()
+        alert_row.addWidget(QtWidgets.QLabel('警告与错误分栏显示，各自保留最近 12 条'))
         alert_row.addStretch(1)
         alert_row.addWidget(clear)
         alert_widget = QtWidgets.QWidget()
         alert_widget.setLayout(alert_row)
         grid.addWidget(alert_widget, 5, 0, 1, 4)
-        self.alert_box = QtWidgets.QPlainTextEdit()
-        self.alert_box.setReadOnly(True)
-        self.alert_box.setMaximumBlockCount(200)
-        self.alert_box.setFixedHeight(110)
-        self.alert_box.setFont(QtGui.QFont('Monospace', 9))
-        grid.addWidget(self.alert_box, 6, 0, 1, 4)
+
+        def make_box(group_title, color):
+            group = QtWidgets.QGroupBox(group_title)
+            layout = QtWidgets.QVBoxLayout(group)
+            count = QtWidgets.QLabel('%s：0' % group_title)
+            box = QtWidgets.QPlainTextEdit()
+            box.setReadOnly(True)
+            box.setMaximumBlockCount(200)
+            box.setFixedHeight(110)
+            box.setFont(QtGui.QFont('Monospace', 9))
+            box.setStyleSheet('color: %s;' % color)
+            layout.addWidget(count)
+            layout.addWidget(box)
+            return group, count, box
+
+        warn_group, self.warn_count, self.warn_box = make_box('警告 WARN', '#b26a00')
+        error_group, self.error_count, self.error_box = make_box('错误 ERROR', '#c62828')
+        alert_split = QtWidgets.QHBoxLayout()
+        alert_split.addWidget(warn_group)
+        alert_split.addWidget(error_group)
+        alert_split_widget = QtWidgets.QWidget()
+        alert_split_widget.setLayout(alert_split)
+        grid.addWidget(alert_split_widget, 6, 0, 1, 4)
         return group
 
     def _paint(self, label, text, level):
@@ -583,14 +604,30 @@ class Console(QtWidgets.QMainWindow):
             else:
                 chip.setStyleSheet('color: #b0b0b0;')
 
-        alerts = data.get('alerts') or []
-        lines = ['[%s] %-5s %s: %s' % (item['time'], item['level'], item['node'], item['text'])
-                 for item in alerts]
-        self.alert_box.setPlainText('\n'.join(lines))
-        self.alert_box.verticalScrollBar().setValue(self.alert_box.verticalScrollBar().maximum())
-        bad = sum(1 for item in alerts if item['level'] in ('ERROR', 'BAD'))
-        self.alert_count.setText('告警：最近 %d 条，严重 %d 条' % (len(alerts), bad))
-        self.alert_count.setStyleSheet('color: %s;' % ('#c62828' if bad else '#b26a00' if alerts else '#1a7f37'))
+        warns = data.get('warns')
+        errors = data.get('errors')
+        if warns is None or errors is None:
+            alerts = data.get('alerts') or []
+            warns = [item for item in alerts if item['level'] not in ('ERROR', 'BAD')]
+            errors = [item for item in alerts if item['level'] in ('ERROR', 'BAD')]
+
+        def render(box, items):
+            box.setPlainText('\n'.join(
+                '[%s] %-5s %s: %s' % (item['time'], item['level'], item['node'], item['text'])
+                for item in items))
+            box.verticalScrollBar().setValue(box.verticalScrollBar().maximum())
+
+        render(self.warn_box, warns)
+        render(self.error_box, errors)
+        self.warn_count.setText('警告 WARN：最近 %d 条' % len(warns))
+        self.error_count.setText('错误 ERROR：最近 %d 条' % len(errors))
+        self.warn_count.setStyleSheet('color: %s;' % ('#b26a00' if warns else '#1a7f37'))
+        self.error_count.setStyleSheet('color: %s;' % ('#c62828' if errors else '#1a7f37'))
+
+    def _clear_alerts(self):
+        for box in (getattr(self, 'warn_box', None), getattr(self, 'error_box', None)):
+            if box is not None:
+                box.clear()
 
     def _build_run_tab(self):
         page = QtWidgets.QWidget()
@@ -664,7 +701,7 @@ class Console(QtWidgets.QMainWindow):
         self.vlm_state.setStyleSheet('color: #555;')
         grid.addWidget(self.vlm_state, 1, 0, 1, 4)
         vlm_hint = QtWidgets.QLabel(
-            '仅 VLM 方案有效：每条消息触发一次识别（约 5 s），确认后按 /yolo/detections 发布约 4 s。'
+            '仅 VLM 方案有效：每条消息触发一次识别，/yolo/recognition 发布结论后 CV 跟踪3 s；丢框不重置投放计时。'
             '切到 TensorRT YOLO 时这两个按钮禁用。')
         vlm_hint.setStyleSheet('color: #777;')
         vlm_hint.setWordWrap(True)

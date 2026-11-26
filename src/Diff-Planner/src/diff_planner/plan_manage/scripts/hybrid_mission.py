@@ -270,7 +270,10 @@ class Mission:
         if (config.get('hazard_drop', {}).get('enabled', False)
                 or config.get('rescue_drop', {}).get('enabled', False)):
             message_types['detections'] = String
-        self.subscribers = [ros.Subscriber(config['topics'][key], message_type, self.receive,
+            message_types['recognition'] = String
+        topics = dict(config['topics'])
+        topics.setdefault('recognition', '/yolo/recognition')
+        self.subscribers = [ros.Subscriber(topics[key], message_type, self.receive,
                                            callback_args=key, queue_size=1, tcp_nodelay=True)
                             for key, message_type in message_types.items()]
         # EKF 的 "odom time out of buffer / ekf may be wrong" 只出现在 /rosout 里；
@@ -286,11 +289,7 @@ class Mission:
         # 当前航点最近一帧的结论：(航点, 时刻, 'hit'|'other'|'miss')。
         # 其它标识只对触发识别的那个航点生效，避免上一点的结果带到下一点。
         self._point_outcomes = {}
-        # 连续命中的起点/最近一次命中时刻（按投放段）：识别框要稳定保持
-        # stable_seconds 才允许下降投放；断更超过 max_age 清零重新计时。
-        self._hit_since = {}
-        self._hit_last = {}
-        self._stable_wait_logged = set()
+        self._tracking_started = {}
         self.drop_done = False
         self.rescue_done = set()
         self.rescue_index = 0    # 下一个要投放的救援物资序号（对应 rescue_drop/payloads）
@@ -301,6 +300,8 @@ class Mission:
             self.data[key] = (message, now)
             if key == 'detections':
                 self.record_detections(message)
+            elif key == 'recognition':
+                self.record_recognition(message)
 
     def receive_log(self, message):
         """记录 EKF 的里程计超时告警，供起飞前门禁判断。"""
@@ -351,7 +352,12 @@ class Mission:
             if set(publishers.get(topics[key], [])) != expected:
                 raise FlightError(topics[key] + ' 存在其他发布者或本节点未注册，拒绝争抢控制')
         if set(publishers.get(topics['planner_cmd'], [])) != {self.config['traj_server_node']}:
-            raise FlightError('Planner 输入源不唯一/未隔离，请使用 run_exp_hybrid_mission.launch')
+            actual = sorted(publishers.get(topics['planner_cmd'], []))
+            raise FlightError('Planner 输入源不唯一/未隔离：%s 当前发布者=%s，期望只有 %s；'
+                              '请用 run_exp_hybrid_mission.launch 启动（不要直接启动 '
+                              'run_exp_single_lio.launch），并确认 traj_server 没崩溃'
+                              % (topics['planner_cmd'], actual or '无',
+                                 self.config['traj_server_node']))
         if self.config['controller_node'] not in subscribers.get(topics['output_cmd'], []):
             raise FlightError('PX4Ctrl 未订阅任务控制出口')
         if self.config['planner_node'] not in subscribers.get(topics['goal'], []):
@@ -621,12 +627,14 @@ class Mission:
             raise FlightError('%s/points 只允许 %s，当前含 %s'
                               % (section, '/'.join(allowed_points), '/'.join(unknown)))
         legacy_service = settings.get('service', '/servo/push')
+        # steps 只是没有 payloads 时的单次投放写法；显式配了 payloads 时不要再生成本地
+        # 默认的 /servo/push，否则预检会去等一个永不存在的服务（2026-11-26 起飞前误拒）。
         raw_steps = settings.get('steps')
-        if raw_steps is None:
-            raw_steps = [dict(services=[legacy_service], hold=settings.get('push_wait', 2.5))]
-        steps = self._parse_steps(raw_steps, section + '/steps')
-        offset_body = self._parse_offset(settings.get('offset_body'), section + '/offset_body')
         raw_payloads = settings.get('payloads')
+        if raw_steps is None and raw_payloads is None:
+            raw_steps = [dict(services=[legacy_service], hold=settings.get('push_wait', 2.5))]
+        steps = [] if raw_steps is None else self._parse_steps(raw_steps, section + '/steps')
+        offset_body = self._parse_offset(settings.get('offset_body'), section + '/offset_body')
         if raw_payloads is None:
             payloads = [dict(steps=steps, offset_body=offset_body)]
         else:
@@ -658,7 +666,8 @@ class Mission:
                       vote_window=vote_setting('vote_window', 0.5),
                       vote_frames=vote_setting('vote_frames', 15),
                       vote_ratio=vote_setting('vote_ratio', 0.60),
-                      stable_seconds=vote_setting('stable_seconds', 3.0),
+                      confirmation_source=vote_setting('confirmation_source', 'vlm'),
+                      tracking_seconds=vote_setting('tracking_seconds', 3.0),
                       hover_seconds=settings.get('hover_seconds', 3.0),
                       wait_timeout=settings.get('wait_timeout', 15.0),
                       height=settings.get('height', 0.15),
@@ -679,7 +688,7 @@ class Mission:
         if not isinstance(values['service'], str) or not values['service'].startswith('/'):
             raise FlightError(section + '/service 必须是以 / 开头的服务名')
         for name in ('min_confidence', 'vote_frames', 'vote_ratio', 'vote_window',
-                     'stable_seconds', 'hover_seconds', 'wait_timeout',
+                     'tracking_seconds', 'hover_seconds', 'wait_timeout',
                      'height', 'speed', 'tolerance', 'timeout', 'push_wait', 'max_age'):
             value = values[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -697,6 +706,8 @@ class Mission:
                 or values['vote_mode'] not in ('time', 'frames', 'none')):
             raise FlightError('%s/vote_mode 必须是 time（时间窗）、frames（帧数窗）或 none'
                               '（单帧确认，仅建议用于 VLM）' % section)
+        if values['confirmation_source'] not in ('vlm', 'detections'):
+            raise FlightError('%s/confirmation_source 必须是 vlm 或 detections' % section)
         if values['height'] <= 0 or values['height'] >= self.config['takeoff']['height']:
             raise FlightError(section + '/height 必须大于 0 且小于 takeoff/height')
         if values['speed'] > self.config['direct']['max_speed']:
@@ -705,8 +716,8 @@ class Mission:
                      'timeout', 'push_wait', 'max_age'):
             if values[name] <= 0:
                 raise FlightError('%s/%s 必须为正数' % (section, name))
-        if values['stable_seconds'] < 0:
-            raise FlightError('%s/stable_seconds 不能为负数' % section)
+        if values['tracking_seconds'] < 0:
+            raise FlightError('%s/tracking_seconds 不能为负数' % section)
         if values['wait_timeout'] < values['hover_seconds']:
             raise FlightError(section + '/wait_timeout 不能小于 hover_seconds，否则永远等不到投放')
         return values
@@ -860,13 +871,13 @@ class Mission:
             settings = self.config.get(section) or {}
             if not settings.get('enabled', False):
                 continue
+            values = self.drop_settings() if section == 'hazard_drop' else self.rescue_settings()
             votes = self.vote_buffer(section)
             outcome = self.frame_outcome(
                 message, settings, '危险品' if section == 'hazard_drop' else '救助人员')
             votes.append((now, outcome == 'hit'))
-            self._note_hit_streak(section, now, outcome)
             point = getattr(self, '_recognition_point', None)
-            if point is not None:
+            if point is not None and values['confirmation_source'] == 'detections':
                 outcomes = getattr(self, '_point_outcomes', None)
                 if outcomes is None:
                     outcomes = self._point_outcomes = {}
@@ -886,6 +897,56 @@ class Mission:
                 while len(votes) > params['vote_frames']:
                     del votes[0]
             setattr(self, self.vote_attrs(section)[1], now)
+            if (values['confirmation_source'] == 'detections' and outcome == 'hit'
+                    and self.plan_votes_stable(section, now, values)):
+                self._start_tracking(section, point, now)
+
+    def record_recognition(self, message):
+        """锁定当前航点的新鲜 VLM 语义结果，不依赖后续 CV 是否找到框。"""
+        point = getattr(self, '_recognition_point', None)
+        plan = self.plan_for(point)
+        if plan is None:
+            return
+        section, values = plan
+        if values['confirmation_source'] != 'vlm':
+            return
+        try:
+            result = json.loads(message.data)
+            stamp = float(result['stamp'])
+            confidence = float(result['confidence'])
+            class_id = result['class_id']
+            label = result['label']
+            mode = result['mode']
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return
+        now_stamp = self.ros.Time.now().to_sec()
+        if (not math.isfinite(stamp) or not math.isfinite(confidence)
+                or not 0.0 <= confidence <= 1.0
+                or not -self.safety['max_future_stamp'] <= now_stamp - stamp <= values['max_age']
+                or stamp < getattr(self, '_recognition_requested_stamp', float('-inf'))
+                or not isinstance(class_id, int) or isinstance(class_id, bool)
+                or not isinstance(label, str) or confidence < values['min_confidence']):
+            return
+        expected_mode, expected_class = (('sign', 0) if section == 'hazard_drop'
+                                         else ('portrait', 2))
+        if mode != expected_mode:
+            return
+        now = time.monotonic()
+        if class_id == expected_class and values['label'] in label:
+            self._start_tracking(section, point, now)
+        elif class_id == 1:
+            self._point_outcomes[section] = (point, now, 'other')
+
+    def _start_tracking(self, section, point, now):
+        if point is None or point != getattr(self, '_recognition_point', None):
+            return
+        plan = self.plan_for(point)
+        if plan is None or plan[0] != section:
+            return
+        if section not in self._tracking_started:
+            self._tracking_started[section] = (point, now)
+            self.ros.loginfo('%s 点已确认"%s"，CV 跟踪 %.1fs 后下降；丢框不重置计时',
+                             point, plan[1]['label'], plan[1]['tracking_seconds'])
 
     def votes_stable(self, votes, last, now, values):
         """投票窗口内命中比例达到 vote_ratio，且最近一帧未过期。
@@ -917,55 +978,16 @@ class Mission:
         _, last_attr = self.vote_attrs(section)
         return self.votes_stable(self.vote_buffer(section), getattr(self, last_attr, None), now, values)
 
-    def _stable_grace(self, section):
-        """连续命中的容忍断更时间（秒）：沿用该投放段/全局 max_age。"""
-        settings = self.config.get(section) or {}
-        grace = settings.get('max_age')
-        if grace is None:
-            grace = (self.config.get('detection') or {}).get('max_age', 0.5)
-        try:
-            grace = float(grace)
-        except (TypeError, ValueError):
-            return 0.5
-        return grace if math.isfinite(grace) and grace > 0 else 0.5
-
-    def _note_hit_streak(self, section, now, outcome):
-        """维护连续命中计时；短暂漏检（≤max_age）不清零，避免一次跟丢就重等。"""
-        if outcome == 'hit':
-            last = self._hit_last.get(section)
-            if last is None or now - last > self._stable_grace(section):
-                self._hit_since[section] = now
-            self._hit_last[section] = now
-        else:
-            last = self._hit_last.get(section)
-            if last is None or now - last > self._stable_grace(section):
-                self._hit_since.pop(section, None)
-                self._hit_last.pop(section, None)
-
-    def plan_stably_detected(self, section, now, values):
-        """识别框是否已连续稳定保持 stable_seconds，且最近一帧仍在有效期内。"""
-        seconds = values.get('stable_seconds', 0.0)
-        if seconds <= 0:
-            return True
-        since = self._hit_since.get(section)
-        last = self._hit_last.get(section)
-        if since is None or last is None or now - last > values['max_age']:
-            return False
-        return now - since >= seconds
-
     def _reset_detection_progress(self, section):
-        """新航点触发识别时清空该投放段上一点的投票/稳定计时/结论。"""
+        """新航点触发识别时清空该投放段上一点的投票/跟踪计时/结论。"""
         votes = self.vote_buffer(section)
         while len(votes):
             del votes[0]
         setattr(self, self.vote_attrs(section)[1], None)
-        self._hit_since.pop(section, None)
-        self._hit_last.pop(section, None)
+        self._tracking_started.pop(section, None)
         outcomes = getattr(self, '_point_outcomes', None)
         if outcomes is not None:
             outcomes.pop(section, None)
-        self._stable_wait_logged = {
-            key for key in self._stable_wait_logged if key[0] != section}
 
     def request_recognition(self, point):
         """到达需要识别的航点时发送一次 /yolo/enable。
@@ -986,9 +1008,10 @@ class Mission:
         trigger = recognition_trigger(section)
         if trigger is None:
             return None
-        self._recognition_point = point
-        # 新航点重新识别：清掉上一航点的投票和稳定计时，避免旧结论直接触发投放。
-        self._reset_detection_progress(section)
+        with self.lock:
+            self._recognition_point = point
+            self._reset_detection_progress(section)
+            self._recognition_requested_stamp = self.ros.Time.now().to_sec()
         publisher = self.publishers.get('yolo_enable')
         if publisher is None:
             self.ros.logwarn('%s 点需要单次识别，但没有 /yolo/enable 发布者', point)
@@ -1037,6 +1060,12 @@ class Mission:
             return 'continue'
         if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
             return 'continue'
+        tracking = self._tracking_started.get(section)
+        if (tracking is not None
+                and tracking[0] == point == getattr(self, '_recognition_point', None)):
+            if now - settled_since < values['hover_seconds']:
+                return 'wait'
+            return 'drop' if now - tracking[1] >= values['tracking_seconds'] else 'wait'
         recorded = getattr(self, '_point_outcomes', {}).get(section)
         if (recorded and recorded[0] == point and recorded[2] == 'other'
                 and now - recorded[1] <= values['max_age']):
@@ -1044,26 +1073,15 @@ class Mission:
             return 'continue'
         if now - settled_since < values['hover_seconds']:
             return 'wait'
-        confirmed = self.plan_votes_stable(section, now, values)
-        if confirmed and self.plan_stably_detected(section, now, values):
-            return 'drop'
         if now - settled_since >= values['wait_timeout']:
             votes = self.vote_buffer(section)
             hits = sum(1 for _, hit in votes if hit)
-            reason = ('已确认"%s"但标注尚未稳定 %.1fs' % (values['label'], values['stable_seconds'])
-                      if confirmed else
-                      '仍未确认"%s"' % values['label'])
+            reason = '仍未确认"%s"' % values['label']
             self.ros.logwarn('%s 点悬停 %.1fs %s：检测样本 %d 条中命中 %d 条'
                              '（需要 %s、置信度 ≥%.2f），不投放，继续任务',
                              point, now - settled_since, reason, len(votes), hits,
                              self.vote_window_text(values), values['min_confidence'])
             return 'continue'
-        if confirmed:
-            key = (section, point)
-            if key not in self._stable_wait_logged:
-                self._stable_wait_logged.add(key)
-                self.ros.loginfo('%s 点已确认"%s"，等标注稳定 %.1fs 后再下降投放',
-                                 point, values['label'], values['stable_seconds'])
         return 'wait'
 
     def drop_decision(self, now, label, settled_since):
