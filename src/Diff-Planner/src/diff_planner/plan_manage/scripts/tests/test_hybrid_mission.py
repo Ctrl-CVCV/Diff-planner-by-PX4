@@ -186,6 +186,11 @@ class RuntimeRules(unittest.TestCase):
         self.runner.takeoff_sent = False
         self.runner.lock = threading.Lock()
         self.runner.data = {}
+        # __init__ 里创建的检测状态；这里用 __new__ 构造 runner，必须手工补齐。
+        self.runner._point_outcomes = {}
+        self.runner._hit_since = {}
+        self.runner._hit_last = {}
+        self.runner._stable_wait_logged = set()
 
     def simulate_takeoff(self, ctrl_at=None, confirmed_at=0.3, position_at=None, origin=(0, 0, 0)):
         runner, clock = self.runner, self.clock
@@ -1159,6 +1164,67 @@ class HazardDrop(unittest.TestCase):
             self.assertEqual(runner.plan_decision(self.clock.now, 'C', self.clock.now),
                              'wait')
 
+    def test_drop_waits_until_box_is_stable_three_seconds(self):
+        """识别到目标后，框要连续稳定标注 stable_seconds 才允许下降投放。"""
+        runner = self.runner
+        self.enable_drop()
+        values = runner.drop_settings()
+        self.assertEqual(values['stable_seconds'], 3.0)
+        centered = dict(label='危险品标识', confidence=0.9, cx=320.0, cy=240.0,
+                        x1=290.0, y1=210.0, x2=350.0, y2=270.0)
+        settled = self.clock.now - values['hover_seconds'] - 0.1   # 悬停时间已满足
+        runner._recognition_point = 'C'
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            for _ in range(5):                                      # 0.5 s 命中
+                self.feed([centered])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'wait',
+                             '框刚稳定不足 3 s 不能下降')
+            for _ in range(20):                                     # 累计 2.5 s
+                self.feed([centered])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'wait')
+            for _ in range(7):                                      # 累计 3.2 s
+                self.feed([centered])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'drop')
+
+    def test_losing_the_box_restarts_the_stable_timer(self):
+        runner = self.runner
+        self.enable_drop()
+        values = runner.drop_settings()
+        centered = dict(label='危险品标识', confidence=0.9, cx=320.0, cy=240.0,
+                        x1=290.0, y1=210.0, x2=350.0, y2=270.0)
+        settled = self.clock.now - values['hover_seconds'] - 0.1
+        runner._recognition_point = 'C'
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            for _ in range(20):
+                self.feed([centered])
+                self.clock.sleep(0.1)
+            # 跟丢超过 max_age：计时清零，重新累计。
+            for _ in range(8):                                      # 0.8 s 没有框
+                self.feed([])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'wait')
+            for _ in range(5):
+                self.feed([centered])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'wait',
+                             '重新看到框后要重新稳定 3 s')
+
+    def test_new_point_resets_previous_detection_and_stability(self):
+        runner = self.runner
+        self.enable_drop()
+        runner._recognition_point = 'C'
+        runner.vote_buffer('hazard_drop').append((self.clock.now, True))
+        runner.hazard_last = self.clock.now
+        runner._hit_since['hazard_drop'] = self.clock.now - 10.0
+        runner._hit_last['hazard_drop'] = self.clock.now
+        self.assertIs(runner.request_recognition('D'), False)
+        self.assertNotIn('hazard_drop', runner._hit_since, '新航点必须重新累计稳定时间')
+        self.assertEqual(list(runner.vote_buffer('hazard_drop')), [])
+        self.assertIsNone(runner.hazard_last)
+
     def test_no_detection_waits_then_continues_without_dropping(self):
         runner, clock = self.runner, self.clock
         self.enable_drop()
@@ -1296,6 +1362,9 @@ class HazardDrop(unittest.TestCase):
         # 时间窗模式下用最近 0.5s 内的票；帧数模式同样满足（最近 N 帧全命中）。
         runner.hazard_votes = [(105.0 - 0.01 * index, True) for index in range(samples)]
         runner.hazard_last = 104.99
+        # 稳定标注计时同样已满足 stable_seconds。
+        runner._hit_since['hazard_drop'] = 100.0
+        runner._hit_last['hazard_drop'] = 104.99
         self.assertEqual(runner.drop_decision(105.0, 'C', 99.0), 'drop')
         runner.drop_done = True
         self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'continue',

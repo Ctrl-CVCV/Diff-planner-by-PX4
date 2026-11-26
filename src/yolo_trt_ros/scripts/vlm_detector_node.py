@@ -7,8 +7,9 @@ That message alone chooses the VLM question. Border color is not consulted.
 The crop sent to the VLM is the outer rectangular frame. The published sign box
 is the rectangle tangent to the triangle's three corners. A portrait keeps its
 outermost frame. Either box is followed for about 4 seconds.
-非危险标志 and 不是人物头像 are published as class 1, 其它标识. The JSON on
-/yolo/detections uses the original YOLO fields.
+非危险标志 and 不是人物头像 are published as class 1, 其它标识; class 1 keeps its
+JSON but is not boxed or labelled in the preview. The JSON on /yolo/detections
+uses the original YOLO fields.
 """
 import json
 import os
@@ -241,7 +242,8 @@ class VlmDetectorNode(object):
 
     def _draw(self, frame, detection, hold, now, status=''):
         canvas = frame.copy()
-        if detection is not None:
+        # 只有危险品(0)和救助人员(2)画框；其它标识(1)不画，避免把无关目标当成投放目标。
+        if detection is not None and int(detection['class_id']) in (0, 2):
             class_id = int(detection['class_id'])
             color = _CLASS_COLORS.get(class_id, _CLASS_COLORS[1])
             x1, y1 = int(round(detection['x1'])), int(round(detection['y1']))

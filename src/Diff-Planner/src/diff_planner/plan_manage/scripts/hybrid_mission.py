@@ -286,6 +286,11 @@ class Mission:
         # 当前航点最近一帧的结论：(航点, 时刻, 'hit'|'other'|'miss')。
         # 其它标识只对触发识别的那个航点生效，避免上一点的结果带到下一点。
         self._point_outcomes = {}
+        # 连续命中的起点/最近一次命中时刻（按投放段）：识别框要稳定保持
+        # stable_seconds 才允许下降投放；断更超过 max_age 清零重新计时。
+        self._hit_since = {}
+        self._hit_last = {}
+        self._stable_wait_logged = set()
         self.drop_done = False
         self.rescue_done = set()
         self.rescue_index = 0    # 下一个要投放的救援物资序号（对应 rescue_drop/payloads）
@@ -653,6 +658,7 @@ class Mission:
                       vote_window=vote_setting('vote_window', 0.5),
                       vote_frames=vote_setting('vote_frames', 15),
                       vote_ratio=vote_setting('vote_ratio', 0.60),
+                      stable_seconds=vote_setting('stable_seconds', 3.0),
                       hover_seconds=settings.get('hover_seconds', 3.0),
                       wait_timeout=settings.get('wait_timeout', 15.0),
                       height=settings.get('height', 0.15),
@@ -673,7 +679,7 @@ class Mission:
         if not isinstance(values['service'], str) or not values['service'].startswith('/'):
             raise FlightError(section + '/service 必须是以 / 开头的服务名')
         for name in ('min_confidence', 'vote_frames', 'vote_ratio', 'vote_window',
-                     'hover_seconds', 'wait_timeout',
+                     'stable_seconds', 'hover_seconds', 'wait_timeout',
                      'height', 'speed', 'tolerance', 'timeout', 'push_wait', 'max_age'):
             value = values[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -699,6 +705,8 @@ class Mission:
                      'timeout', 'push_wait', 'max_age'):
             if values[name] <= 0:
                 raise FlightError('%s/%s 必须为正数' % (section, name))
+        if values['stable_seconds'] < 0:
+            raise FlightError('%s/stable_seconds 不能为负数' % section)
         if values['wait_timeout'] < values['hover_seconds']:
             raise FlightError(section + '/wait_timeout 不能小于 hover_seconds，否则永远等不到投放')
         return values
@@ -856,6 +864,7 @@ class Mission:
             outcome = self.frame_outcome(
                 message, settings, '危险品' if section == 'hazard_drop' else '救助人员')
             votes.append((now, outcome == 'hit'))
+            self._note_hit_streak(section, now, outcome)
             point = getattr(self, '_recognition_point', None)
             if point is not None:
                 outcomes = getattr(self, '_point_outcomes', None)
@@ -908,6 +917,56 @@ class Mission:
         _, last_attr = self.vote_attrs(section)
         return self.votes_stable(self.vote_buffer(section), getattr(self, last_attr, None), now, values)
 
+    def _stable_grace(self, section):
+        """连续命中的容忍断更时间（秒）：沿用该投放段/全局 max_age。"""
+        settings = self.config.get(section) or {}
+        grace = settings.get('max_age')
+        if grace is None:
+            grace = (self.config.get('detection') or {}).get('max_age', 0.5)
+        try:
+            grace = float(grace)
+        except (TypeError, ValueError):
+            return 0.5
+        return grace if math.isfinite(grace) and grace > 0 else 0.5
+
+    def _note_hit_streak(self, section, now, outcome):
+        """维护连续命中计时；短暂漏检（≤max_age）不清零，避免一次跟丢就重等。"""
+        if outcome == 'hit':
+            last = self._hit_last.get(section)
+            if last is None or now - last > self._stable_grace(section):
+                self._hit_since[section] = now
+            self._hit_last[section] = now
+        else:
+            last = self._hit_last.get(section)
+            if last is None or now - last > self._stable_grace(section):
+                self._hit_since.pop(section, None)
+                self._hit_last.pop(section, None)
+
+    def plan_stably_detected(self, section, now, values):
+        """识别框是否已连续稳定保持 stable_seconds，且最近一帧仍在有效期内。"""
+        seconds = values.get('stable_seconds', 0.0)
+        if seconds <= 0:
+            return True
+        since = self._hit_since.get(section)
+        last = self._hit_last.get(section)
+        if since is None or last is None or now - last > values['max_age']:
+            return False
+        return now - since >= seconds
+
+    def _reset_detection_progress(self, section):
+        """新航点触发识别时清空该投放段上一点的投票/稳定计时/结论。"""
+        votes = self.vote_buffer(section)
+        while len(votes):
+            del votes[0]
+        setattr(self, self.vote_attrs(section)[1], None)
+        self._hit_since.pop(section, None)
+        self._hit_last.pop(section, None)
+        outcomes = getattr(self, '_point_outcomes', None)
+        if outcomes is not None:
+            outcomes.pop(section, None)
+        self._stable_wait_logged = {
+            key for key in self._stable_wait_logged if key[0] != section}
+
     def request_recognition(self, point):
         """到达需要识别的航点时发送一次 /yolo/enable。
 
@@ -928,6 +987,8 @@ class Mission:
         if trigger is None:
             return None
         self._recognition_point = point
+        # 新航点重新识别：清掉上一航点的投票和稳定计时，避免旧结论直接触发投放。
+        self._reset_detection_progress(section)
         publisher = self.publishers.get('yolo_enable')
         if publisher is None:
             self.ros.logwarn('%s 点需要单次识别，但没有 /yolo/enable 发布者', point)
@@ -983,16 +1044,26 @@ class Mission:
             return 'continue'
         if now - settled_since < values['hover_seconds']:
             return 'wait'
-        if self.plan_votes_stable(section, now, values):
+        confirmed = self.plan_votes_stable(section, now, values)
+        if confirmed and self.plan_stably_detected(section, now, values):
             return 'drop'
         if now - settled_since >= values['wait_timeout']:
             votes = self.vote_buffer(section)
             hits = sum(1 for _, hit in votes if hit)
-            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：检测样本 %d 条中命中 %d 条'
+            reason = ('已确认"%s"但标注尚未稳定 %.1fs' % (values['label'], values['stable_seconds'])
+                      if confirmed else
+                      '仍未确认"%s"' % values['label'])
+            self.ros.logwarn('%s 点悬停 %.1fs %s：检测样本 %d 条中命中 %d 条'
                              '（需要 %s、置信度 ≥%.2f），不投放，继续任务',
-                             point, now - settled_since, values['label'], len(votes), hits,
+                             point, now - settled_since, reason, len(votes), hits,
                              self.vote_window_text(values), values['min_confidence'])
             return 'continue'
+        if confirmed:
+            key = (section, point)
+            if key not in self._stable_wait_logged:
+                self._stable_wait_logged.add(key)
+                self.ros.loginfo('%s 点已确认"%s"，等标注稳定 %.1fs 后再下降投放',
+                                 point, values['label'], values['stable_seconds'])
         return 'wait'
 
     def drop_decision(self, now, label, settled_since):

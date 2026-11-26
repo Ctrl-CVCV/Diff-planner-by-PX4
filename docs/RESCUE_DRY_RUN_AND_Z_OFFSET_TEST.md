@@ -24,6 +24,7 @@ rescue_drop:
   label: 救助人员
   min_confidence: 0.70
   # 确认方式默认取 detection 段：当前 vote_mode: none（最近一帧命中即确认，VLM 用）
+  # 确认后还要连续稳定标注 detection/stable_seconds（3 s）才允许下降
   hover_seconds: 3.0
   wait_timeout: 15.0
   height: 0.15         # 离该点地面的高度
@@ -146,13 +147,16 @@ rostopic echo /drone_0_mission/state
 | 时间 | 行为 |
 | --- | --- |
 | 0–3 s | 到点稳定悬停（`mission/arrival_dwell`） |
-| 3 s 起 | 检查检测结果；最近一帧命中即确认 → `DROP_DESCEND` |
-| 3–11 s | 以 ≤0.15 m/s 从航点高度降到离地 0.15 m（约 0.65 m 高度差，参考时长约 8 s） |
+| 3 s 起 | 检查检测结果；最近一帧命中即确认（`vote_mode: none`） |
+| 确认后再 3 s | 框必须连续稳定标注 `detection/stable_seconds`（3 s）；期间跟丢超过 `max_age` 重新计时 |
+| 约 6 s 起 | 稳定达标 → `DROP_DESCEND` |
+| 之后约 8 s | 以 ≤0.15 m/s 从航点高度降到离地 0.15 m（约 0.65 m 高度差） |
 | +2.5 s | `DROP_PUSH`：低空保持，**测试模式不调用任何舵机** |
-| 约 8 s | `DROP_ASCEND` 爬回航点高度，继续飞往下一点 |
+| 再约 8 s | `DROP_ASCEND` 爬回航点高度，继续飞往下一点 |
 
 未确认目标时：从到点起最多等 `wait_timeout`（15 s），然后按原任务流飞走，不下降。
-识别为「其它标识」时不等满 15 s，直接飞往下一点。
+识别为「其它标识」时不等满 15 s，直接飞往下一点；预览画面也不再给「其它标识」画框，
+只有「危险品」（红框）和「救助人员」（蓝框）会标注。
 `--execute` 模式下任务脚本到点会自动发 `/yolo/enable`（C/D=false，F/G/H=true），不用人工点；
 手工/悬停测试时才需要自己触发。送给 VLM 的是外层矩形边框。
 
