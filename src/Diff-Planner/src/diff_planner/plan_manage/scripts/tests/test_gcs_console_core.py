@@ -3,6 +3,7 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,9 +29,67 @@ class LoadPointsTest(unittest.TestCase):
 
     def test_reads_shipped_config(self):
         points = core.load_points(CONFIG)
-        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'):
+        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
             self.assertIn(label, points)
-        self.assertEqual(points['I']['xyz'][2], 0.8)
+        self.assertEqual(points['J']['xyz'][2], 0.8)
+        self.assertIsNone(points['I']['mirror'])
+        self.assertEqual(points['I']['mirror_offset'], [0.0, 0.0])
+        self.assertIsNone(core.mirror_link(points, 'F'))
+        self.assertIsNone(core.mirror_link(points, 'I'))
+        self.assertEqual(points['E']['mirror'], 'C')
+        self.assertEqual(points['E']['mirror_offset'], [0.60, 0.0])
+        self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
+        self.assertEqual(core.mirror_link(points, 'E'), ('C', -0.6, 0.0))
+
+    def test_mirror_is_bidirectional(self):
+        points = {'F': dict(xyz=[1.0, 2.0, 0.8], mirror=None),
+                  'I': dict(xyz=[1.0, 2.0, 0.8], mirror='F')}
+        self.assertEqual(core.mirror_of(points, 'I'), 'F')
+        self.assertEqual(core.mirror_of(points, 'F'), 'I')
+        self.assertIsNone(core.mirror_of(points, 'A'))
+
+    def test_mirror_offset_links_c_and_e(self):
+        points = {'C': dict(mirror=None, mirror_offset=[0.0, 0.0]),
+                  'E': dict(mirror='C', mirror_offset=[0.6, 0.0])}
+        self.assertEqual(core.mirror_link(points, 'C'), ('E', 0.6, 0.0))
+        self.assertEqual(core.mirror_link(points, 'E'), ('C', -0.6, 0.0))
+
+    def test_capture_records_f_and_i_independently(self):
+        original = core.load_points(CONFIG)
+        for label in ('F', 'I'):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                self.assertIsNone(core.mirror_link(original, label))
+                updated = core.update_point_line(CONFIG.read_text(encoding='utf-8'),
+                                                 label, 1.5, 2.5, 0.03, measured=True)
+                path = Path(directory) / 'mission.yaml'
+                path.write_text(updated, encoding='utf-8')
+                points = core.load_points(path)
+                self.assertEqual(points[label]['xyz'][:2], [1.5, 2.5])
+                self.assertEqual(points[label]['xyz'][2], original[label]['xyz'][2])
+                self.assertEqual(points[label]['yaw_deg'], original[label]['yaw_deg'])
+                self.assertAlmostEqual(points[label]['z_offset'], 0.03)
+                self.assertTrue(points[label]['measured'])
+                self.assertIsNone(core.mirror_link(points, label))
+                for other in original:
+                    if other != label:
+                        self.assertEqual(points[other], original[other])
+
+    def test_capture_updates_mirror_without_touching_yaw(self):
+        text = ('points:\n'
+                '  F: {xyz: [1.0, 2.0, 0.8], yaw_deg: 90.0, z_offset: 0.0}\n'
+                '  I: {xyz: [1.0, 2.0, 0.8], yaw_deg: 180.0, z_offset: 0.0, mirror: F}\n')
+        updated = core.update_point_line(text, 'F', 1.5, 2.5, 0.03, measured=True)
+        updated = core.update_point_line(updated, 'I', 1.5, 2.5, 0.03, measured=True)
+        path = Path('/tmp/gcs_console_mirror_capture.yaml')
+        path.write_text(updated, encoding='utf-8')
+        points = core.load_points(path)
+        self.assertEqual(points['F']['xyz'][:2], [1.5, 2.5])
+        self.assertEqual(points['I']['xyz'][:2], [1.5, 2.5])
+        self.assertAlmostEqual(points['F']['z_offset'], 0.03)
+        self.assertAlmostEqual(points['I']['z_offset'], 0.03)
+        self.assertEqual(points['F']['yaw_deg'], 90.0)
+        self.assertEqual(points['I']['yaw_deg'], 180.0)
+        self.assertEqual(points['I']['mirror'], 'F')
 
     def test_reads_sample(self):
         path = Path('/tmp/gcs_console_sample.yaml')
@@ -123,6 +182,39 @@ class CommandsTest(unittest.TestCase):
     def test_yolo_window_flag(self):
         self.assertIn('show_window:=false', core.cmd_yolo(show_window=False))
         self.assertNotIn('show_window:=false', core.cmd_yolo(show_window=True))
+
+    def test_yolo_backend_flag(self):
+        self.assertNotIn('use_vlm:=false', core.cmd_yolo(use_vlm=True))
+        self.assertIn('use_vlm:=false', core.cmd_yolo(use_vlm=False))
+        both = core.cmd_yolo(show_window=False, use_vlm=False)
+        self.assertIn('show_window:=false', both)
+        self.assertIn('use_vlm:=false', both)
+
+    def test_vlm_mode_values(self):
+        self.assertFalse(core.vlm_enable_value(core.VLM_MODE_DANGER))
+        self.assertTrue(core.vlm_enable_value(core.VLM_MODE_PERSON))
+        self.assertEqual((core.VLM_MODE_DANGER, core.VLM_MODE_PERSON), (0, 1))
+        with self.assertRaises(ValueError):
+            core.vlm_enable_value(2)
+
+    def test_vlm_trigger_command(self):
+        danger = core.cmd_vlm_trigger(core.VLM_MODE_DANGER)
+        portrait = core.cmd_vlm_trigger(core.VLM_MODE_PERSON)
+        self.assertIn('/yolo/enable', danger)
+        self.assertIn('std_msgs/Bool', danger)
+        self.assertIn('data: false', danger)
+        self.assertIn('data: true', portrait)
+
+    def test_vlm_service_commands(self):
+        start = core.cmd_vlm_service_start()
+        self.assertIn('systemctl --user start qwen2.5-vl.service', start)
+        self.assertIn('http://127.0.0.1:8080/health', start)
+        self.assertIn('systemctl --user stop qwen2.5-vl.service',
+                      core.cmd_vlm_service_stop())
+
+    def test_vlm_service_ready_unreachable(self):
+        self.assertFalse(core.vlm_service_ready(
+            health_url='http://127.0.0.1:9/health', timeout=0.2))
 
     def test_mission_flags(self):
         argv = core.mission_argv(execute=True, map_verified=True, direct_verified=True,

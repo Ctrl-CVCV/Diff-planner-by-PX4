@@ -150,7 +150,7 @@ rostopic echo -n 1 /ekf/flight_path | grep frame_id   # 应为 world
 | `Commanded Path (setpoints_cmd)` | `/commanded_path` | 绿色连续线条，指令轨迹（Planner + 直控段，从启动累积到降落） |
 | `Registered Cloud` | `/cloud_registered` | 灰色点云，默认关闭，需真实 TF |
 
-交替开关 RAW / Inflated，从俯视和侧视检查起飞竖直通道、各 Planner 段与直控段的可用性，以及 I 下方降落区；膨胀地图不应把悬停点或目标包住。地图不在视野内时调 `Views → Current → Focal Point` 到 EKF 的 world 坐标，**不要改 frame 或发假 TF** 把它拉回屏幕。
+交替开关 RAW / Inflated，从俯视和侧视检查起飞竖直通道、各 Planner 段与直控段的可用性，以及 J 下方降落区；膨胀地图不应把悬停点或目标包住。地图不在视野内时调 `Views → Current → Focal Point` 到 EKF 的 world 坐标，**不要改 frame 或发假 TF** 把它拉回屏幕。
 
 注意：地图显示正常**不证明**路径可达或可安全起飞；实时看图用 `live_obstacle_map.rviz`，历史包回放用 `flight_replay.rviz`（手册第 12 节，独立 master）。
 
@@ -205,7 +205,7 @@ rosservice call /mavros/param/get "{param_id: 'PWM_AUX_DIS6'}"   # 必须是 500
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py 
 ```
 
-核对打印出的 A 原点与 B/C/D/E/F/G/H/I 的 **world** 坐标和 RViz 一致；确认没有提前手动起飞。有 `measured: false` 的占位航点时 `--execute` 会被拒绝，必须实测后改 `true`。
+核对打印出的 A 原点与 B/C/D/E/F/G/H/I/J 的 **world** 坐标和 RViz 一致；确认没有提前手动起飞。有 `measured: false` 的占位航点时 `--execute` 会被拒绝，必须实测后改 `true`。
 
 预检进程退出后，在同一终端执行：
 
@@ -264,11 +264,11 @@ roslaunch yolo_trt_ros yolo_trt.launch device:=/dev/video1 engine_path:=$HOME/yo
 - 引擎固定在 `/home/nvidia/yolo/best.engine`（检测阈值 `conf_thres` 默认 0.60，类别名由 `label_names` 参数给出，顺序即 `class_id` 0/1/2）。
 - 相机节点打不开设备会 `logfatal` 退出，检测节点随后一直等图像——看到 `/yolo/preview/image` 没数据先查 `ls -l /dev/video0` 和 `rosparam get /usb_camera`。
 - 队友改了 `yolo_trt_ros` 源码或新增了 `.engine` 才需要重编译：`cd ~/gcs_ws && catkin_make -j2`（**只在地面做**，devel 里已经编好当前版本）。
-- 终端 4 的录包器话题表是固定的（`BASE_TOPICS` + `/drone_0_*`），**不含 YOLO 话题**。要留飞行中的检测结果就另开一个终端、用独立目录并行录（`/yolo/detections` 很小，原始图像 / 预览图带宽大，先地面试一次看磁盘增长）：
+- 终端 4 的录包器现已默认包含 `/yolo/enable`、`/yolo/recognition`、`/yolo/detections`（2026-11-26 更新）。VLM 确认后固定 CV 跟踪 3 s，丢框不重置，随后按原航点下降投放；飞行健康保护保留。原始图像 / 预览图带宽大，如需图像另开终端并行录，先地面观察磁盘增长：
 
   ```bash
   export FLIGHT_DIR="$(cat "$HOME/flight_logs/current_hybrid_session.txt")"
-  rosbag record -O "$FLIGHT_DIR/yolo.bag" /yolo/detections /usb_cam/image_raw
+  rosbag record -O "$FLIGHT_DIR/yolo_images.bag" /usb_cam/image_raw /yolo/preview/image
   ```
 
 

@@ -26,6 +26,7 @@ BASE_TOPICS = (
     '/mavros/setpoint_raw/attitude', '/mavros/setpoint_raw/target_attitude',
     '/mavros/estimator_status', '/mavros/statustext/recv', '/mavros/timesync_status',
     '/mavros/time_reference', '/vins_estimator/extrinsic',
+    '/yolo/enable', '/yolo/recognition', '/yolo/detections',
 )
 
 

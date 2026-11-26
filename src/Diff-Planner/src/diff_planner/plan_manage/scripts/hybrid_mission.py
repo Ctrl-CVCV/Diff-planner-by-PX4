@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Automatic takeoff; planner through B to C; direct PX4Ctrl to D; planner to E and F;
-direct PX4Ctrl to G and H; planner back to I; hover, descend close to the ground, then land.
+"""Automatic takeoff; planner through B to C; direct PX4Ctrl to D and E; planner to F and G;
+direct PX4Ctrl to H and I (pass-through); planner back to J; hover, descend close to the ground, then land.
 
-Planner legs: A->B, B->C, D->E, E->F, H->I. Direct PX4Ctrl legs: C->D, F->G, G->H.
-B, C, D, E, F and G dwell mission/arrival_dwell (3 s) after arrival; I dwells
-mission/hover_seconds before landing.
+Planner legs: A->B, B->C, E->F, F->G, I->J. Direct PX4Ctrl legs: C->D, D->E, G->H, H->I.
+B, C, D, E, F, G and H dwell mission/arrival_dwell (3 s) after arrival; I is a
+pass-through waypoint (switch to the next leg within mission/pass_radius, no dwell);
+J dwells mission/hover_seconds before landing.
 
-H is a pass-through waypoint: the next goal is sent as soon as the vehicle enters
+I is a pass-through waypoint: the next goal is sent as soon as the vehicle enters
 mission/pass_radius around it, without a dwell, while the script keeps tracking the
 previous direct reference instead of freezing at the waypoint.
 
@@ -20,16 +21,16 @@ hazard_drop/steps 与 rescue_drop/payloads 里，每一步是 {services: [...], 
 hover_seconds 秒且投票确认"危险品"后，降到离地 height，执行 hazard_drop/steps，
 再爬回该航点高度。到点后最多等 wait_timeout 秒，超时只告警并继续。
 
-救援物资（rescue_drop/enabled，默认开启但 dry_run=true，可用 --no-rescue-drop 关）：
-E/F/G 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
-用完即止。dry_run=true 时只降高度、不调用舵机，用于当前测试阶段。
+救援物资（rescue_drop/enabled，默认开启且 dry_run=false 真实投放，可用 --no-rescue-drop 关）：
+F/G/H 每确认一次"救助人员"投放一个救援物资，按 payloads 顺序消耗（2 号 → 下放 + 3 号 → 4 号），
+用完即止。dry_run=true 时只降高度、不调用舵机，留给只降高度的回归测试。
 
 航点地面高度误差（points/<航点>/z_offset，单位米，默认 0）：实际地面不平，各点相对起飞
 原点的地面高度差可直接填在这里，任务脚本会把该偏移加到该点所有高度目标上（含投放/进近
 的离地高度），使离地间隙与设定一致。
 
 Before landing the script descends under position control to landing/approach_height
-above the takeoff ground (x, y still commanded to I) and only then asks PX4Ctrl to land,
+above the takeoff ground (x, y still commanded to J) and only then asks PX4Ctrl to land,
 so the AUTO_LAND ramp starts from a pose that is already the landing pose.
 Offline by default.
 """
@@ -96,6 +97,8 @@ def vote_raw_config(config, section):
 
 
 def vote_text(mode, window, frames, ratio):
+    if mode == 'none':
+        return '最近一帧命中即确认（VLM 单次判定，不做投票）'
     if mode == 'time':
         return '最近 %.1fs 内至少 %d 票、命中比例 ≥%.0f%%' % (window, frames, ratio * 100.0)
     return '最近 %d 帧里命中比例 ≥%.0f%%' % (frames, ratio * 100.0)
@@ -162,6 +165,15 @@ def direct_sample(start, start_yaw, target, duration, elapsed):
                 yaw=wrap(start_yaw + yaw_delta * blend), yaw_dot=yaw_delta * speed)
 
 
+def recognition_trigger(section):
+    """Bool sent once on /yolo/enable. False is one danger check, True is one portrait check."""
+    if section == 'hazard_drop':
+        return False
+    if section == 'rescue_drop':
+        return True
+    return None
+
+
 def mission_legs():
     """固定航段表。pass_through 的航点一进入 pass_radius 就切下一段，不悬停。"""
     return (
@@ -173,13 +185,18 @@ def mission_legs():
         # C 接在 B 之后：等待 C 轨迹期间继续转发上一条 Planner 指令（B 的悬停），不中断控制。
         dict(target='C', mode='planner', bridge='planner'),
         dict(target='D', mode='direct'),
-        dict(target='E', mode='planner'),
-        # F 是 Planner 与直控的切换点：到点后同样稳定悬停，再开始直控。
+        # E（2026-11-25 新增）：D→E 需要避障，改为纯 PX4Ctrl 直控（坐标同 C，机头 270°）。
+        # 2026-11-25 实飞教训：E 若当经过点，直控未停稳就切 Planner，起点带速度/未转到 270°，
+        # 第一段轨迹被速度检查连拒、A* 起点报错，随后 Emergency stop。
+        # 因此 E 按普通航点到点连续稳定悬停 arrival_dwell（3 s）后再发 F。
+        dict(target='E', mode='direct'),
         dict(target='F', mode='planner'),
-        dict(target='G', mode='direct'),
-        # H 也是经过点：进入 pass_radius 就发 I 目标；等待期间继续跟踪 G→H 的直控参考。
-        dict(target='H', mode='direct', pass_through=True),
-        dict(target='I', mode='planner'),
+        # G 是 Planner 与直控的切换点：到点后同样稳定悬停，再开始直控。
+        dict(target='G', mode='planner'),
+        dict(target='H', mode='direct'),
+        # I 也是经过点：进入 pass_radius 就发 J 目标；等待期间继续跟踪 H→I 的直控参考。
+        dict(target='I', mode='direct', pass_through=True),
+        dict(target='J', mode='planner'),
     )
 
 
@@ -219,14 +236,15 @@ class Mission:
         from nav_msgs.msg import Odometry
         from quadrotor_msgs.msg import PositionCommand, Px4ctrlState, TakeoffLand
         from rosgraph_msgs.msg import Log
-        from std_msgs.msg import Empty, String
+        from std_msgs.msg import Bool, Empty, String
 
         self.ros, self.config = ros, config
         self.source_config = copy.deepcopy(config)
         self.origin = None
         self.read_only = read_only
         self.safety, self.settings = config['safety'], config['mission']
-        self.types = dict(goal=PoseStamped, command=PositionCommand, land=TakeoffLand, stop=Empty, status=String)
+        self.types = dict(goal=PoseStamped, command=PositionCommand, land=TakeoffLand, stop=Empty,
+                          status=String, yolo_enable=Bool)
         self.lock = threading.Lock()
         self.data = {}
         self.sustained = {}
@@ -241,13 +259,21 @@ class Mission:
                                                 latch=(key == 'status'))
                                for key, topic in (('goal', 'goal'), ('command', 'output_cmd'),
                                                   ('land', 'land'), ('stop', 'stop'), ('status', 'status'))}
+            if (config.get('hazard_drop', {}).get('enabled', False)
+                    or config.get('rescue_drop', {}).get('enabled', False)):
+                enable_topic = config['topics'].get('yolo_enable', '/yolo/enable')
+                self.publishers['yolo_enable'] = ros.Publisher(
+                    enable_topic, Bool, queue_size=1)
         message_types = dict(odom=Odometry, lio=Odometry, fcu=State, extended=ExtendedState, rc=RCIn,
                              ctrl=Px4ctrlState, planner_cmd=PositionCommand)
         # 两个投放计划都关闭时完全不订阅检测话题：默认任务流与之前一致，YOLO 是否在跑都不影响任务。
         if (config.get('hazard_drop', {}).get('enabled', False)
                 or config.get('rescue_drop', {}).get('enabled', False)):
             message_types['detections'] = String
-        self.subscribers = [ros.Subscriber(config['topics'][key], message_type, self.receive,
+            message_types['recognition'] = String
+        topics = dict(config['topics'])
+        topics.setdefault('recognition', '/yolo/recognition')
+        self.subscribers = [ros.Subscriber(topics[key], message_type, self.receive,
                                            callback_args=key, queue_size=1, tcp_nodelay=True)
                             for key, message_type in message_types.items()]
         # EKF 的 "odom time out of buffer / ekf may be wrong" 只出现在 /rosout 里；
@@ -260,6 +286,10 @@ class Mission:
         self.hazard_last = None
         self.rescue_votes = deque()
         self.rescue_last = None
+        # 当前航点最近一帧的结论：(航点, 时刻, 'hit'|'other'|'miss')。
+        # 其它标识只对触发识别的那个航点生效，避免上一点的结果带到下一点。
+        self._point_outcomes = {}
+        self._tracking_started = {}
         self.drop_done = False
         self.rescue_done = set()
         self.rescue_index = 0    # 下一个要投放的救援物资序号（对应 rescue_drop/payloads）
@@ -270,6 +300,8 @@ class Mission:
             self.data[key] = (message, now)
             if key == 'detections':
                 self.record_detections(message)
+            elif key == 'recognition':
+                self.record_recognition(message)
 
     def receive_log(self, message):
         """记录 EKF 的里程计超时告警，供起飞前门禁判断。"""
@@ -320,7 +352,12 @@ class Mission:
             if set(publishers.get(topics[key], [])) != expected:
                 raise FlightError(topics[key] + ' 存在其他发布者或本节点未注册，拒绝争抢控制')
         if set(publishers.get(topics['planner_cmd'], [])) != {self.config['traj_server_node']}:
-            raise FlightError('Planner 输入源不唯一/未隔离，请使用 run_exp_hybrid_mission.launch')
+            actual = sorted(publishers.get(topics['planner_cmd'], []))
+            raise FlightError('Planner 输入源不唯一/未隔离：%s 当前发布者=%s，期望只有 %s；'
+                              '请用 run_exp_hybrid_mission.launch 启动（不要直接启动 '
+                              'run_exp_single_lio.launch），并确认 traj_server 没崩溃'
+                              % (topics['planner_cmd'], actual or '无',
+                                 self.config['traj_server_node']))
         if self.config['controller_node'] not in subscribers.get(topics['output_cmd'], []):
             raise FlightError('PX4Ctrl 未订阅任务控制出口')
         if self.config['planner_node'] not in subscribers.get(topics['goal'], []):
@@ -590,12 +627,14 @@ class Mission:
             raise FlightError('%s/points 只允许 %s，当前含 %s'
                               % (section, '/'.join(allowed_points), '/'.join(unknown)))
         legacy_service = settings.get('service', '/servo/push')
+        # steps 只是没有 payloads 时的单次投放写法；显式配了 payloads 时不要再生成本地
+        # 默认的 /servo/push，否则预检会去等一个永不存在的服务（2026-11-26 起飞前误拒）。
         raw_steps = settings.get('steps')
-        if raw_steps is None:
-            raw_steps = [dict(services=[legacy_service], hold=settings.get('push_wait', 2.5))]
-        steps = self._parse_steps(raw_steps, section + '/steps')
-        offset_body = self._parse_offset(settings.get('offset_body'), section + '/offset_body')
         raw_payloads = settings.get('payloads')
+        if raw_steps is None and raw_payloads is None:
+            raw_steps = [dict(services=[legacy_service], hold=settings.get('push_wait', 2.5))]
+        steps = [] if raw_steps is None else self._parse_steps(raw_steps, section + '/steps')
+        offset_body = self._parse_offset(settings.get('offset_body'), section + '/offset_body')
         if raw_payloads is None:
             payloads = [dict(steps=steps, offset_body=offset_body)]
         else:
@@ -627,8 +666,10 @@ class Mission:
                       vote_window=vote_setting('vote_window', 0.5),
                       vote_frames=vote_setting('vote_frames', 15),
                       vote_ratio=vote_setting('vote_ratio', 0.60),
+                      confirmation_source=vote_setting('confirmation_source', 'vlm'),
+                      tracking_seconds=vote_setting('tracking_seconds', 3.0),
                       hover_seconds=settings.get('hover_seconds', 3.0),
-                      wait_timeout=settings.get('wait_timeout', 10.0),
+                      wait_timeout=settings.get('wait_timeout', 15.0),
                       height=settings.get('height', 0.15),
                       speed=settings.get('speed', 0.15),
                       tolerance=settings.get('tolerance', 0.02),
@@ -647,7 +688,7 @@ class Mission:
         if not isinstance(values['service'], str) or not values['service'].startswith('/'):
             raise FlightError(section + '/service 必须是以 / 开头的服务名')
         for name in ('min_confidence', 'vote_frames', 'vote_ratio', 'vote_window',
-                     'hover_seconds', 'wait_timeout',
+                     'tracking_seconds', 'hover_seconds', 'wait_timeout',
                      'height', 'speed', 'tolerance', 'timeout', 'push_wait', 'max_age'):
             value = values[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -661,8 +702,12 @@ class Mission:
             raise FlightError(section + '/min_confidence 必须位于 (0, 1]')
         if not 0.0 < values['vote_ratio'] <= 1.0:
             raise FlightError(section + '/vote_ratio 必须位于 (0, 1]')
-        if not isinstance(values['vote_mode'], str) or values['vote_mode'] not in ('time', 'frames'):
-            raise FlightError('%s/vote_mode 必须是 time（时间窗）或 frames（帧数窗）' % section)
+        if (not isinstance(values['vote_mode'], str)
+                or values['vote_mode'] not in ('time', 'frames', 'none')):
+            raise FlightError('%s/vote_mode 必须是 time（时间窗）、frames（帧数窗）或 none'
+                              '（单帧确认，仅建议用于 VLM）' % section)
+        if values['confirmation_source'] not in ('vlm', 'detections'):
+            raise FlightError('%s/confirmation_source 必须是 vlm 或 detections' % section)
         if values['height'] <= 0 or values['height'] >= self.config['takeoff']['height']:
             raise FlightError(section + '/height 必须大于 0 且小于 takeoff/height')
         if values['speed'] > self.config['direct']['max_speed']:
@@ -671,6 +716,8 @@ class Mission:
                      'timeout', 'push_wait', 'max_age'):
             if values[name] <= 0:
                 raise FlightError('%s/%s 必须为正数' % (section, name))
+        if values['tracking_seconds'] < 0:
+            raise FlightError('%s/tracking_seconds 不能为负数' % section)
         if values['wait_timeout'] < values['hover_seconds']:
             raise FlightError(section + '/wait_timeout 不能小于 hover_seconds，否则永远等不到投放')
         return values
@@ -680,8 +727,8 @@ class Mission:
         return self.payload_settings('hazard_drop', ('C', 'D'), once_default=True)
 
     def rescue_settings(self):
-        """救援物资投放参数（E/F/G），once 默认 false：各点独立判断。"""
-        return self.payload_settings('rescue_drop', ('E', 'F', 'G'), once_default=False)
+        """救援物资投放参数（F/G/H），once 默认 false：各点独立判断。"""
+        return self.payload_settings('rescue_drop', ('F', 'G', 'H'), once_default=False)
 
     @staticmethod
     def box_center(detection):
@@ -697,11 +744,15 @@ class Mission:
             return None
 
     def frame_hit(self, message, settings, default_label='危险品'):
-        """单帧判定：画面里可能有多个图案，只认离图像中心最近的那一个。
+        """单帧是否命中本航点要找的标签。"""
+        return self.frame_outcome(message, settings, default_label) == 'hit'
 
-        无人机悬停在目标正上方，所以中心目标才是投放对象；边缘的相似框（别的
-        目标、误检）不参与判定。选中后还要看它的类别与置信度。坏消息/空帧
-        按"未命中"参与投票。缺图像尺寸或框坐标时退化为"任一命中即算命中"。
+    def frame_outcome(self, message, settings, default_label='危险品'):
+        """单帧结论：'hit' 命中投放标签，'other' 是其它标识，'miss' 还没有可用结论。
+
+        画面里可能有多个图案，只认离图像中心最近的那一个。无人机悬停在目标正上方，
+        所以中心目标才是投放对象；边缘框不参与判定。坏消息和空帧是 miss。
+        缺图像尺寸或框坐标时，任一框命中即算 hit，出现其它标识则算 other。
         """
         label = str(settings.get('label', default_label)).strip()
         try:
@@ -711,9 +762,9 @@ class Mission:
         try:
             payload = json.loads(message.data)
         except (TypeError, ValueError, AttributeError):
-            return False
+            return 'miss'
         if not isinstance(payload, dict):
-            return False
+            return 'miss'
         candidates = []
         for detection in payload.get('detections') or []:
             if not isinstance(detection, dict):
@@ -724,7 +775,7 @@ class Mission:
                 continue
             candidates.append((self.box_center(detection), text, confidence))
         if not candidates:
-            return False
+            return 'miss'
         try:
             width = float(payload.get('image_width') or 0.0)
             height = float(payload.get('image_height') or 0.0)
@@ -740,13 +791,18 @@ class Mission:
             lower = height * (1.0 - bottom_ratio)
             located = [item for item in located if upper <= item[0][1] <= lower]
             if not located:
-                return False
+                return 'miss'
             cx, cy = width / 2.0, height / 2.0
             _, text, confidence = min(
                 located, key=lambda item: math.hypot(item[0][0] - cx, item[0][1] - cy))
-            return label in text and confidence >= threshold
-        return any(label in text and confidence >= threshold
-                   for _, text, confidence in candidates)
+            texts = ((text, confidence),)
+        else:
+            texts = tuple((text, confidence) for _, text, confidence in candidates)
+        if any(label in text and confidence >= threshold for text, confidence in texts):
+            return 'hit'
+        if any(text == '其它标识' for text, _confidence in texts):
+            return 'other'
+        return 'miss'
 
     def detection_band(self):
         """有效检测的纵向区域：排除图像最上方/最下方各一段。
@@ -785,7 +841,7 @@ class Mission:
         return votes
 
     def vote_params(self, section):
-        """该投放段的投票参数（time=时间窗 / frames=帧数窗）；坏配置按默认值处理。"""
+        """该投放段的投票参数（time=时间窗 / frames=帧数窗 / none=单帧确认）；坏配置按默认值处理。"""
         mode, window, frames, ratio = vote_raw_config(self.config, section)
         try:
             mode = str(mode)
@@ -794,7 +850,7 @@ class Mission:
             ratio = float(ratio)
         except (TypeError, ValueError):
             return dict(vote_mode='frames', vote_window=0.5, vote_frames=15, vote_ratio=0.60)
-        if mode not in ('time', 'frames'):
+        if mode not in ('time', 'frames', 'none'):
             mode = 'frames'
         if not math.isfinite(window) or window <= 0.0:
             window = 0.5
@@ -815,9 +871,17 @@ class Mission:
             settings = self.config.get(section) or {}
             if not settings.get('enabled', False):
                 continue
+            values = self.drop_settings() if section == 'hazard_drop' else self.rescue_settings()
             votes = self.vote_buffer(section)
-            votes.append((now, self.frame_hit(
-                message, settings, '危险品' if section == 'hazard_drop' else '救助人员')))
+            outcome = self.frame_outcome(
+                message, settings, '危险品' if section == 'hazard_drop' else '救助人员')
+            votes.append((now, outcome == 'hit'))
+            point = getattr(self, '_recognition_point', None)
+            if point is not None and values['confirmation_source'] == 'detections':
+                outcomes = getattr(self, '_point_outcomes', None)
+                if outcomes is None:
+                    outcomes = self._point_outcomes = {}
+                outcomes[section] = (point, now, outcome)
             params = self.vote_params(section)
             if params['vote_mode'] == 'time':
                 cutoff = now - params['vote_window']
@@ -825,10 +889,64 @@ class Mission:
                     del votes[0]
                 while len(votes) > _VOTE_HISTORY_LIMIT:
                     del votes[0]
+            elif params['vote_mode'] == 'none':
+                # 单帧确认只看最新一帧，队列不需要保留历史。
+                while len(votes) > 1:
+                    del votes[0]
             else:
                 while len(votes) > params['vote_frames']:
                     del votes[0]
             setattr(self, self.vote_attrs(section)[1], now)
+            if (values['confirmation_source'] == 'detections' and outcome == 'hit'
+                    and self.plan_votes_stable(section, now, values)):
+                self._start_tracking(section, point, now)
+
+    def record_recognition(self, message):
+        """锁定当前航点的新鲜 VLM 语义结果，不依赖后续 CV 是否找到框。"""
+        point = getattr(self, '_recognition_point', None)
+        plan = self.plan_for(point)
+        if plan is None:
+            return
+        section, values = plan
+        if values['confirmation_source'] != 'vlm':
+            return
+        try:
+            result = json.loads(message.data)
+            stamp = float(result['stamp'])
+            confidence = float(result['confidence'])
+            class_id = result['class_id']
+            label = result['label']
+            mode = result['mode']
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return
+        now_stamp = self.ros.Time.now().to_sec()
+        if (not math.isfinite(stamp) or not math.isfinite(confidence)
+                or not 0.0 <= confidence <= 1.0
+                or not -self.safety['max_future_stamp'] <= now_stamp - stamp <= values['max_age']
+                or stamp < getattr(self, '_recognition_requested_stamp', float('-inf'))
+                or not isinstance(class_id, int) or isinstance(class_id, bool)
+                or not isinstance(label, str) or confidence < values['min_confidence']):
+            return
+        expected_mode, expected_class = (('sign', 0) if section == 'hazard_drop'
+                                         else ('portrait', 2))
+        if mode != expected_mode:
+            return
+        now = time.monotonic()
+        if class_id == expected_class and values['label'] in label:
+            self._start_tracking(section, point, now)
+        elif class_id == 1:
+            self._point_outcomes[section] = (point, now, 'other')
+
+    def _start_tracking(self, section, point, now):
+        if point is None or point != getattr(self, '_recognition_point', None):
+            return
+        plan = self.plan_for(point)
+        if plan is None or plan[0] != section:
+            return
+        if section not in self._tracking_started:
+            self._tracking_started[section] = (point, now)
+            self.ros.loginfo('%s 点已确认"%s"，CV 跟踪 %.1fs 后下降；丢框不重置计时',
+                             point, plan[1]['label'], plan[1]['tracking_seconds'])
 
     def votes_stable(self, votes, last, now, values):
         """投票窗口内命中比例达到 vote_ratio，且最近一帧未过期。
@@ -839,6 +957,10 @@ class Mission:
         votes = votes or ()
         if last is None or now - last > values['max_age']:
             return False
+        if values.get('vote_mode', 'frames') == 'none':
+            # VLM 每触发一次只给一个判定，OpenCV 跟随期间重复发布同一结论；
+            # 再做投票没有额外信息，只按最近一帧（仍受 max_age 约束）。
+            return bool(votes) and bool(votes[-1][1])
         if values.get('vote_mode', 'frames') == 'time':
             cutoff = now - values['vote_window']
             votes = [item for item in votes if item[0] >= cutoff]
@@ -856,10 +978,55 @@ class Mission:
         _, last_attr = self.vote_attrs(section)
         return self.votes_stable(self.vote_buffer(section), getattr(self, last_attr, None), now, values)
 
+    def _reset_detection_progress(self, section):
+        """新航点触发识别时清空该投放段上一点的投票/跟踪计时/结论。"""
+        votes = self.vote_buffer(section)
+        while len(votes):
+            del votes[0]
+        setattr(self, self.vote_attrs(section)[1], None)
+        self._tracking_started.pop(section, None)
+        outcomes = getattr(self, '_point_outcomes', None)
+        if outcomes is not None:
+            outcomes.pop(section, None)
+
+    def request_recognition(self, point):
+        """到达需要识别的航点时发送一次 /yolo/enable。
+
+        C/D 发 false，只做一次危险品识别；F/G/H 发 true，只做一次人像识别。
+        同一个航点重复进入悬停不再发送。
+        """
+        if getattr(self, '_recognition_point', None) == point:
+            return None
+        plan = self.plan_for(point)
+        if plan is None:
+            return None
+        section, values = plan
+        if values['once'] and self.plan_done(section, point):
+            return None
+        if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
+            return None
+        trigger = recognition_trigger(section)
+        if trigger is None:
+            return None
+        with self.lock:
+            self._recognition_point = point
+            self._reset_detection_progress(section)
+            self._recognition_requested_stamp = self.ros.Time.now().to_sec()
+        publisher = self.publishers.get('yolo_enable')
+        if publisher is None:
+            self.ros.logwarn('%s 点需要单次识别，但没有 /yolo/enable 发布者', point)
+            return trigger
+        message = self.types['yolo_enable']()
+        message.data = trigger
+        publisher.publish(message)
+        self.ros.loginfo('%s 点单次触发识别：/yolo/enable=%s（%s）',
+                         point, trigger, '人像' if trigger else '危险品')
+        return trigger
+
     def plan_for(self, point):
         """该航点适用的投放计划：('hazard_drop'|'rescue_drop', values) 或 None。
 
-        两组航点（C/D 与 E/F/G）互不重叠；同时满足时以危险品优先。
+        两组航点（C/D 与 F/G/H）互不重叠；同时满足时以危险品优先。
         """
         hazard = self.drop_settings()
         if hazard['enabled'] and point in hazard['points']:
@@ -893,16 +1060,26 @@ class Mission:
             return 'continue'
         if section == 'rescue_drop' and getattr(self, 'rescue_index', 0) >= len(values['payloads']):
             return 'continue'
+        tracking = self._tracking_started.get(section)
+        if (tracking is not None
+                and tracking[0] == point == getattr(self, '_recognition_point', None)):
+            if now - settled_since < values['hover_seconds']:
+                return 'wait'
+            return 'drop' if now - tracking[1] >= values['tracking_seconds'] else 'wait'
+        recorded = getattr(self, '_point_outcomes', {}).get(section)
+        if (recorded and recorded[0] == point and recorded[2] == 'other'
+                and now - recorded[1] <= values['max_age']):
+            self.ros.loginfo('%s 点识别为其它标识，不投放，直接飞往下一航点', point)
+            return 'continue'
         if now - settled_since < values['hover_seconds']:
             return 'wait'
-        if self.plan_votes_stable(section, now, values):
-            return 'drop'
         if now - settled_since >= values['wait_timeout']:
             votes = self.vote_buffer(section)
             hits = sum(1 for _, hit in votes if hit)
-            self.ros.logwarn('%s 点悬停 %.1fs 仍未确认"%s"：投票队列 %d 票中命中 %d 票'
+            reason = '仍未确认"%s"' % values['label']
+            self.ros.logwarn('%s 点悬停 %.1fs %s：检测样本 %d 条中命中 %d 条'
                              '（需要 %s、置信度 ≥%.2f），不投放，继续任务',
-                             point, now - settled_since, values['label'], len(votes), hits,
+                             point, now - settled_since, reason, len(votes), hits,
                              self.vote_window_text(values), values['min_confidence'])
             return 'continue'
         return 'wait'
@@ -1162,10 +1339,12 @@ class Mission:
             raise FlightError('Planner 正在输出旧轨迹；请重启隔离 Planner 后再试')
         self.config, self.safety = resolved, safety
         self.origin = tuple(position)
-        self.ros.loginfo('起飞原点 world=%s；实际 world 目标：hover=%s, B=%s(悬停), C=%s, D=%s, E=%s, F=%s(切换点), G=%s, H=%s(经过点), I=%s(终点)；轴方向与 yaw 仍按 world',
+        self.ros.loginfo('起飞原点 world=%s；实际 world 目标：hover=%s, B=%s(悬停), C=%s, D=%s, E=%s, F=%s, '
+                         'G=%s(切换点), H=%s, I=%s(经过点), J=%s(终点)；轴方向与 yaw 仍按 world',
                          self.origin, hover['xyz'], resolved['points']['B']['xyz'], resolved['points']['C']['xyz'],
                          resolved['points']['D']['xyz'], resolved['points']['E']['xyz'], resolved['points']['F']['xyz'],
-                         resolved['points']['G']['xyz'], resolved['points']['H']['xyz'], resolved['points']['I']['xyz'])
+                         resolved['points']['G']['xyz'], resolved['points']['H']['xyz'],
+                         resolved['points']['I']['xyz'], resolved['points']['J']['xyz'])
         return position, velocity, yaw
 
     def takeoff(self):
@@ -1417,7 +1596,7 @@ class Mission:
     def run(self):
         position, _, yaw = self.takeoff()
         self.active = True
-        # H 是经过点：进入 pass_radius 就发下一段，不悬停。B 现在会悬停 arrival_dwell 秒。
+        # I 是经过点：进入 pass_radius 就发下一段，不悬停。B 现在会悬停 arrival_dwell 秒。
         legs = mission_legs()
         if legs[-1].get('pass_through'):
             raise FlightError('最后一个航点不能设置为经过点', True)
@@ -1486,6 +1665,7 @@ class Mission:
                     if endpoint_hold and arrived(position, velocity, yaw, target, self.safety):
                         if settled_since is None:
                             settled_since = now
+                            self.request_recognition(leg['target'])
                             self.ros.loginfo('%s 点已到达，开始连续稳定悬停计时', leg['target'])
                     else:
                         settled_since = None
@@ -1513,7 +1693,7 @@ class Mission:
             # 位移看门狗只在"规划器确实在指挥飞机运动"时才有意义。规划器紧急停止、目标点被地图
             # 占据判为不可达、或轨迹已到头时，它会给一条停在原地的参考轨迹并保持；这时报
             # "目标发出后 3.0s 内无有效位移"会把规划器的问题说成飞机的问题（2026-10-31 两次：
-            # B→C 被速度检查连拒后急停；F 点距实测障碍仅 0.13m，Planner 停在 0.18m 外不再给参考）。
+            # B→C 被速度检查连拒后急停；G 点距实测障碍仅 0.13m，Planner 停在 0.18m 外不再给参考）。
             # 判据看**指令位置**而不是指令速度：紧急停止/到头的轨迹速度本来就是 0，
             # 而"参考在推进、飞机没跟上"才是真的跟踪故障，那个人仍交给 motion_timeout 看门狗。
             # WAIT_PLANNER_* 阶段不设看门狗：planner_first_command_timeout 已覆盖"没收到新轨迹"。
@@ -1564,7 +1744,9 @@ class Mission:
                 target = self.config['points'][leg['target']]
                 message = self.command(self.hold(target['xyz'], math.radians(target['yaw_deg'])))
                 if arrived(position, velocity, yaw, target, self.safety):
-                    settled_since = settled_since if settled_since is not None else now
+                    if settled_since is None:
+                        settled_since = now
+                        self.request_recognition(leg['target'])
                     if now - settled_since >= self.settings['arrival_dwell']:
                         action = self.plan_decision(now, leg['target'], settled_since)
                         if action == 'drop':
@@ -1748,9 +1930,9 @@ def main(argv=None):
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--check', action='store_true', help='地面未解锁时只读检查程控起飞条件，不发飞行指令')
     action.add_argument('--execute', action='store_true', help='实机执行，默认仅离线显示配置')
-    parser.add_argument('--map-verified', action='store_true', help='人工确认 A→B、B→C、D→E、E→F、H→I 地图正确')
+    parser.add_argument('--map-verified', action='store_true', help='人工确认 A→B、B→C、E→F、F→G、I→J 地图正确')
     parser.add_argument('--direct-path-verified', action='store_true',
-                        help='人工确认 C→D、F→G、G→H 直控路径和 I 下方降落区无障碍')
+                        help='人工确认 C→D、D→E、G→H、H→I 直控路径和 J 下方降落区无障碍')
     parser.add_argument('--hazard-drop', dest='hazard_drop', action='store_true', default=None,
                         help='启用危险品投放（覆盖 hazard_drop/enabled；默认跟随配置）')
     parser.add_argument('--no-hazard-drop', dest='hazard_drop', action='store_false', default=None,
@@ -1767,7 +1949,7 @@ def main(argv=None):
             config.setdefault('hazard_drop', {})['enabled'] = args.hazard_drop
         if args.rescue_drop is not None:
             config.setdefault('rescue_drop', {})['enabled'] = args.rescue_drop
-        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'):
+        for label in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
             point = config['points'][label]
             xyz = point['xyz']
             yaw = point.get('yaw_deg')
@@ -1784,7 +1966,7 @@ def main(argv=None):
         parser.error('参数无效：' + str(error))
     pending = unmeasured_points(config)
     if config.get('coordinate_mode', 'world') == 'takeoff_relative':
-        print('A=[0,0,0] 为确认后锁定的地面起飞原点；B/C/D/E/F/G/H/I 相对该原点，轴方向平行 %s。' % config['frame_id'])
+        print('A=[0,0,0] 为确认后锁定的地面起飞原点；B/C/D/E/F/G/H/I/J 相对该原点，轴方向平行 %s。' % config['frame_id'])
         print('起飞悬停位置相对 A=%s；脚本仅将坐标平移到 world，不重置 EKF/TF。' % hover_point(config)['xyz'])
     else:
         print('坐标为 %s 下绝对米制坐标，A 为起飞后的悬停点。' % config['frame_id'])
@@ -1798,14 +1980,15 @@ def main(argv=None):
              safety.get('ekf_error_window', 30.0), safety.get('ekf_error_limit', 0)))
     print(json.dumps(config['points'], ensure_ascii=False, indent=2))
     print('程控原地起飞 %.2fm → 起飞悬停点稳定 %.1fs → Planner 到 B 并悬停 %.1fs → Planner 到 C 并悬停 %.1fs'
-          ' → 纯 PX4Ctrl 到 D 并悬停 %.1fs → Planner 到 E 并悬停 %.1fs → Planner 到 F 并悬停 %.1fs'
-          ' → 纯 PX4Ctrl 到 G 并悬停 %.1fs → 纯 PX4Ctrl 到 H（经过点，不悬停）'
-          ' → Planner 到 I（终点）并悬停 %.1fs → 降到离地 %.2fm → 降落。' %
+          ' → 纯 PX4Ctrl 到 D 并悬停 %.1fs → 纯 PX4Ctrl 到 E 并悬停 %.1fs'
+          ' → Planner 到 F 并悬停 %.1fs → Planner 到 G 并悬停 %.1fs'
+          ' → 纯 PX4Ctrl 到 H 并悬停 %.1fs → 纯 PX4Ctrl 到 I（经过点，不悬停）'
+          ' → Planner 到 J（终点）并悬停 %.1fs → 降到离地 %.2fm → 降落。' %
           (config['takeoff']['height'], config['takeoff']['hover_seconds'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
            config['mission']['arrival_dwell'], config['mission']['arrival_dwell'],
-           config['mission']['hover_seconds'],
+           config['mission']['arrival_dwell'], config['mission']['hover_seconds'],
            config.get('landing', {}).get('approach_height', 0.0)))
     def describe_steps(steps):
         items = []
@@ -1827,7 +2010,7 @@ def main(argv=None):
               % ('/'.join(drop.get('points', ['C', 'D'])), drop.get('hover_seconds', 3.0),
                  vote_text(mode, window, frames, ratio),
                  drop.get('label', '危险品'), drop.get('min_confidence', 0.70),
-                 drop.get('height', 0.15), actions, drop.get('wait_timeout', 10.0)))
+                 drop.get('height', 0.15), actions, drop.get('wait_timeout', 15.0)))
     else:
         print('危险品投放未启用（hazard_drop/enabled=false）：不调用舵机。')
     rescue = config.get('rescue_drop') or {}
@@ -1886,8 +2069,8 @@ def main(argv=None):
         if not args.execute:
             rospy.loginfo('只读检查通过：不解锁、不起飞、不发目标/位置指令/降落请求')
             return 0
-        print('警告：确认后将自动切 OFFBOARD、解锁并起飞！起飞垂直通道和 C→D、F→G、G→H 直控段不做 Planner 避障。定位断更时不会盲目降落；飞手必须可立即接管。')
-        if input('确认 A/B/C/D/E/F/G/H/I、坐标系、航向和 I 降落区，输入 MISSION：').strip() != 'MISSION':
+        print('警告：确认后将自动切 OFFBOARD、解锁并起飞！起飞垂直通道和 C→D、D→E、G→H、H→I 直控段不做 Planner 避障。定位断更时不会盲目降落；飞手必须可立即接管。')
+        if input('确认 A/B/C/D/E/F/G/H/I/J、坐标系、航向和 J 降落区，输入 MISSION：').strip() != 'MISSION':
             print('已取消，未发送飞行指令。')
             return 0
         mission.run()

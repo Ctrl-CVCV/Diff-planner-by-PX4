@@ -5,7 +5,7 @@
 
     1 号物资（消防）  -> /servo3/push          （MAIN7，500→2500）
     2 号物资（救援）  -> /servo4/push          （MAIN8，500→2500）
-    下放 3/4 号       -> /servo1/push + /servo2/push（MAIN5/6，500→1143）
+    下放 3/4 号       -> /servo1/push + /servo2/push（MAIN5/6，500→1800）
     3 号物资（救援）  -> /servo3/push          （MAIN7，500→2500）
     4 号物资（救援）  -> /servo4/push          （MAIN8，500→2500）
 
@@ -39,8 +39,8 @@ PAYLOADS = {
 }
 
 SERVO_CHANNELS = {
-    '/servo1': 'MAIN5（1143：下放）',
-    '/servo2': 'MAIN6（1143：下放）',
+    '/servo1': 'MAIN5（1800：下放）',
+    '/servo2': 'MAIN6（1800：下放）',
     '/servo3': 'MAIN7（2500：1/3 号物资）',
     '/servo4': 'MAIN8（2500：2/4 号物资）',
 }
@@ -161,7 +161,7 @@ def interactive(test):
         print('''\n========== 物资舵机测试 ==========
   1) 1 号物资（/servo3，2500）
   2) 2 号物资（/servo4，2500）
-  3) 下放 3/4 号（/servo1 + /servo2，1143）
+  3) 下放 3/4 号（/servo1 + /servo2，1800）
   4) 3 号物资（/servo3，2500）
   5) 4 号物资（/servo4，2500）
   6) 完整顺序 1→2→下放→3→4（每步确认）

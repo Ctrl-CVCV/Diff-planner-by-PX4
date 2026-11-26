@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-POINT_NAMES = ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I')
+POINT_NAMES = ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J')
 MAX_Z_OFFSET = 0.30
 
 LEVEL_OK = 'ok'
@@ -106,8 +106,46 @@ def load_points(path):
             yaw_deg=point.get('yaw_deg', 0.0),
             z_offset=point.get('z_offset', 0.0),
             measured=point.get('measured', True),
+            mirror=point.get('mirror'),
+            mirror_offset=point.get('mirror_offset') or [0.0, 0.0],
         )
     return result
+
+
+def mirror_link(points, label):
+    """写 label 时要同步的航点及偏移：返回 (other, dx, dy)，没有则 None。
+
+    `mirror`/`mirror_offset` 只用于 GUI 打点联动：写一个点时，另一个点写成
+    (x+dx, y+dy, 同一 z_offset)，yaw 不动。
+    - 声明方（如 E 写了 mirror: C、mirror_offset: [0.6, 0]）：E = C + offset；
+      写 E 时 C = E - offset，所以 dx=-0.6。
+    - 反向（写 C 时）：E = C + offset，dx=+0.6。
+    """
+    point = points.get(label) or {}
+    target = point.get('mirror')
+    offset = point.get('mirror_offset') or [0.0, 0.0]
+    try:
+        ox, oy = float(offset[0]), float(offset[1])
+    except (TypeError, ValueError, IndexError):
+        ox = oy = 0.0
+    if target in points and target != label:
+        return target, -ox, -oy
+    for other, data in points.items():
+        if other == label or data.get('mirror') != label:
+            continue
+        offset = data.get('mirror_offset') or [0.0, 0.0]
+        try:
+            ox, oy = float(offset[0]), float(offset[1])
+        except (TypeError, ValueError, IndexError):
+            ox = oy = 0.0
+        return other, ox, oy
+    return None
+
+
+def mirror_of(points, label):
+    """与 label 联动的航点（可能带偏移），没有则 None。"""
+    link = mirror_link(points, label)
+    return None if link is None else link[0]
 
 
 CAPTURE_GROUND = 'ground'
@@ -243,9 +281,60 @@ def cmd_planner(ws=None):
     return shell_command(ws, 'roslaunch diff_planner run_exp_hybrid_mission.launch')
 
 
-def cmd_yolo(ws=None, show_window=True):
-    suffix = '' if show_window else ' show_window:=false'
+# /yolo/enable 的两种模式（仅 VLM+OpenCV 方案使用）：
+#   0 = 危险标志，对应 C/D 点的危险品投放；
+#   1 = 人像，对应 E/F/G 点的救助人员投放。
+VLM_MODE_DANGER = 0
+VLM_MODE_PERSON = 1
+
+
+def cmd_yolo(ws=None, show_window=True, use_vlm=True):
+    args = []
+    if not show_window:
+        args.append('show_window:=false')
+    if not use_vlm:
+        args.append('use_vlm:=false')
+    suffix = (' ' + ' '.join(args)) if args else ''
     return shell_command(ws, 'roslaunch yolo_trt_ros yolo_trt.launch' + suffix)
+
+
+def vlm_enable_value(mode):
+    """把 GUI 的模式编号翻译成 /yolo/enable 的 Bool 值。"""
+    if mode not in (VLM_MODE_DANGER, VLM_MODE_PERSON):
+        raise ValueError('mode must be 0 (danger sign) or 1 (portrait)')
+    return mode == VLM_MODE_PERSON
+
+
+def cmd_vlm_trigger(mode, topic='/yolo/enable'):
+    """命令行兜底：GUI 的 ROS 线程未连接时用 rostopic 发一次触发。"""
+    value = 'true' if vlm_enable_value(mode) else 'false'
+    return 'rostopic pub -1 %s std_msgs/Bool "data: %s"' % (topic, value)
+
+
+VLM_SERVICE = 'qwen2.5-vl.service'
+VLM_HEALTH_URL = 'http://127.0.0.1:8080/health'
+
+
+def cmd_vlm_service_start(service=VLM_SERVICE, health_url=VLM_HEALTH_URL, wait_seconds=90):
+    """启动 llama-server 并等到 /health 就绪（模型加载约需 10–30 s）。"""
+    return ('systemctl --user start %s && for i in $(seq 1 %d); do '
+            'curl -sf %s >/dev/null 2>&1 && echo "VLM 服务就绪" && exit 0; '
+            'sleep 1; done; echo "VLM 服务启动超时（%d s）"; exit 1'
+            % (service, int(wait_seconds), health_url, int(wait_seconds)))
+
+
+def cmd_vlm_service_stop(service=VLM_SERVICE):
+    return 'systemctl --user stop %s' % service
+
+
+def vlm_service_ready(health_url=VLM_HEALTH_URL, timeout=0.5):
+    """只读探测：VLM 推理服务是否已经加载好。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(health_url, timeout=timeout) as response:
+            return response.status == 200
+    except Exception:
+        return False
 
 
 def cmd_servo(ws=None):

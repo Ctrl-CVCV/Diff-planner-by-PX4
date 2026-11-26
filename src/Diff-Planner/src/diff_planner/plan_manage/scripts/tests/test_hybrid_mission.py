@@ -30,11 +30,13 @@ def configuration():
                             B=dict(xyz=[0.5, 0.0, 0.8], yaw_deg=0.0),
                             C=dict(xyz=[0.5, 0.5, 0.8], yaw_deg=90.0),
                             D=dict(xyz=[0.0, 0.0, 0.8], yaw_deg=90.0),
-                            E=dict(xyz=[0.0, 0.5, 0.8], yaw_deg=90.0),
-                            F=dict(xyz=[0.0, 1.0, 0.8], yaw_deg=90.0),
-                            G=dict(xyz=[0.0, 1.5, 0.8], yaw_deg=90.0),
-                            H=dict(xyz=[0.0, 2.0, 0.8], yaw_deg=90.0),
-                            I=dict(xyz=[0.0, 0.0, 0.8], yaw_deg=180.0))
+                            # E 与 C 同坐标、机头 270°；D→E 直控。
+                            E=dict(xyz=[0.5, 0.5, 0.8], yaw_deg=270.0),
+                            F=dict(xyz=[0.0, 0.5, 0.8], yaw_deg=90.0),
+                            G=dict(xyz=[0.0, 1.0, 0.8], yaw_deg=90.0),
+                            H=dict(xyz=[0.0, 1.5, 0.8], yaw_deg=90.0),
+                            I=dict(xyz=[0.0, 2.0, 0.8], yaw_deg=90.0),
+                            J=dict(xyz=[0.0, 0.0, 0.8], yaw_deg=180.0))
     return config
 
 
@@ -117,6 +119,11 @@ class ConfigAndGeometry(unittest.TestCase):
         self.assertAlmostEqual(abs(sample['yaw']), math.pi)
         self.assertGreater(sample['yaw_dot'], 0)
 
+    def test_recognition_trigger_selects_danger_or_portrait(self):
+        self.assertIs(mission.recognition_trigger('hazard_drop'), False)
+        self.assertIs(mission.recognition_trigger('rescue_drop'), True)
+        self.assertIsNone(mission.recognition_trigger('other'))
+
     def test_arrival_requires_yaw_and_low_speed(self):
         target = self.config['points']['B']
         self.assertTrue(mission.arrived(target['xyz'], (0, 0, 0), 0, target, self.config['safety']))
@@ -179,6 +186,9 @@ class RuntimeRules(unittest.TestCase):
         self.runner.takeoff_sent = False
         self.runner.lock = threading.Lock()
         self.runner.data = {}
+        # __init__ 里创建的检测状态；这里用 __new__ 构造 runner，必须手工补齐。
+        self.runner._point_outcomes = {}
+        self.runner._tracking_started = {}
 
     def simulate_takeoff(self, ctrl_at=None, confirmed_at=0.3, position_at=None, origin=(0, 0, 0)):
         runner, clock = self.runner, self.clock
@@ -205,6 +215,21 @@ class RuntimeRules(unittest.TestCase):
             raise AssertionError('unexpected topic ' + key)
 
         runner.get = mock.Mock(side_effect=get)
+
+    def test_each_recognition_point_sends_one_trigger(self):
+        class EnableMessage:
+            def __init__(self):
+                self.data = None
+
+        self.runner.publishers['yolo_enable'] = mock.Mock()
+        self.runner.types['yolo_enable'] = EnableMessage
+        self.assertIs(self.runner.request_recognition('C'), False)
+        self.assertIs(self.runner.request_recognition('D'), False)
+        self.assertIs(self.runner.request_recognition('D'), None)
+        self.assertIs(self.runner.request_recognition('F'), True)
+        self.assertIs(self.runner.request_recognition('B'), None)
+        published = [call.args[0].data for call in self.runner.publishers['yolo_enable'].publish.call_args_list]
+        self.assertEqual(published, [False, False, True])
 
     def test_takeoff_grace_then_stable_hover_without_position_or_goal(self):
         self.simulate_takeoff()
@@ -816,16 +841,26 @@ class RuntimeRules(unittest.TestCase):
                 # 只在悬停于该航点上方时喂检测结果，模拟相机始终能看到下方的危险品。
                 near = math.dist(state['position'], tuple(runner.config['points'][hazard]['xyz'])) <= 0.1
                 if near:
-                    runner.receive(SimpleNamespace(data=json.dumps(dict(
-                        count=1, detections=[dict(label='危险品标识', confidence=0.9)]))), 'detections')
+                    if runner.config['detection'].get('confirmation_source') == 'vlm':
+                        runner.receive(SimpleNamespace(data=json.dumps(dict(
+                            stamp=1000.0, mode='sign', class_id=0, label='危险品标识',
+                            confidence=0.9))), 'recognition')
+                    else:
+                        runner.receive(SimpleNamespace(data=json.dumps(dict(
+                            count=1, detections=[dict(label='危险品标识', confidence=0.9)]))), 'detections')
             if rescue:
                 # 模拟在指定航点上方看到"救助人员"；rescue 可以是单个航点或多个航点。
                 points = (rescue,) if isinstance(rescue, str) else tuple(rescue)
                 near = any(math.dist(state['position'], tuple(runner.config['points'][point]['xyz'])) <= 0.1
                            for point in points)
                 if near:
-                    runner.receive(SimpleNamespace(data=json.dumps(dict(
-                        count=1, detections=[dict(label='救助人员', confidence=0.9)]))), 'detections')
+                    if runner.config['detection'].get('confirmation_source') == 'vlm':
+                        runner.receive(SimpleNamespace(data=json.dumps(dict(
+                            stamp=1000.0, mode='portrait', class_id=2, label='救助人员',
+                            confidence=0.9))), 'recognition')
+                    else:
+                        runner.receive(SimpleNamespace(data=json.dumps(dict(
+                            count=1, detections=[dict(label='救助人员', confidence=0.9)]))), 'detections')
             return state['position'], (0, 0, 0), state['yaw']
 
         def send_goal(label):
@@ -845,7 +880,7 @@ class RuntimeRules(unittest.TestCase):
             if key != 'planner_cmd':
                 return takeoff_get(key, *args)
             self.assertEqual(key, 'planner_cmd')
-            self.assertIn(runner.stage, ('PLANNER_B', 'PLANNER_C', 'PLANNER_E', 'PLANNER_F', 'PLANNER_I'),
+            self.assertIn(runner.stage, ('PLANNER_B', 'PLANNER_C', 'PLANNER_F', 'PLANNER_G', 'PLANNER_J'),
                           'Planner 数据绝不能在直控段再次读取')
             return planner_command[0]
 
@@ -871,17 +906,17 @@ class RuntimeRules(unittest.TestCase):
         self.assertIn('PLANNER_C', phases)
         self.assertIn('DIRECT', phases)
         self.assertIn('DWELL', phases)
-        self.assertIn('PLANNER_E', phases)
         self.assertIn('PLANNER_F', phases)
-        self.assertIn('PLANNER_I', phases)
+        self.assertIn('PLANNER_G', phases)
+        self.assertIn('PLANNER_J', phases)
         self.assertIn('HOLD', phases)
         self.assertNotIn('DESCEND', phases, '默认 landing/approach_height=0：悬停到位后直接 LAND')
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
-        f_index = phases.index('PLANNER_F')
-        f_start = trace[f_index][0]
-        g_start = next(entry[0] for entry in trace[f_index:] if entry[1] == 'DIRECT')
-        self.assertGreaterEqual(g_start - f_start, self.config['mission']['arrival_dwell'],
-                                'F 到点后应连续稳定悬停 arrival_dwell 再切直控')
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
+        g_index = phases.index('PLANNER_G')
+        g_start = trace[g_index][0]
+        h_start = next(entry[0] for entry in trace[g_index:] if entry[1] == 'DIRECT')
+        self.assertGreaterEqual(h_start - g_start, self.config['mission']['arrival_dwell'],
+                                'G 到点后应连续稳定悬停 arrival_dwell 再切直控')
         self.assertEqual(runner.stage, 'LANDING')
         self.assertEqual(runner.publishers['stop'].publish.call_count, 1)
         self.assertEqual([entry.args[0].takeoff_land_cmd for entry in runner.publishers['land'].publish.call_args_list],
@@ -894,9 +929,9 @@ class RuntimeRules(unittest.TestCase):
                                 'B 到点后应连续稳定悬停 arrival_dwell 秒，再从静止状态规划 C')
         hover_start = next(entry[0] for entry in trace if entry[1] == 'HOLD')
         self.assertGreaterEqual(clock.now - hover_start, self.config['mission']['hover_seconds'],
-                                'I 点必须先连续稳定悬停 hover_seconds 才允许降落')
-        self.assertEqual(state['position'], tuple(runner.config['points']['I']['xyz']),
-                         '默认不进近：发 LAND 时飞机就在 I 点，PX4Ctrl 以该位姿为落点参考')
+                                'J 点必须先连续稳定悬停 hover_seconds 才允许降落')
+        self.assertEqual(state['position'], tuple(runner.config['points']['J']['xyz']),
+                         '默认不进近：发 LAND 时飞机就在 J 点，PX4Ctrl 以该位姿为落点参考')
         self.assertAlmostEqual(state['yaw'], math.pi)
         tolerance = math.radians(self.config['safety']['yaw_tolerance_deg'])
         planner_outputs = [entry[2] for entry in trace if entry[1] == 'PLANNER_B']
@@ -913,20 +948,20 @@ class RuntimeRules(unittest.TestCase):
         direct_outputs = [entry[2] for entry in trace if entry[1] == 'DIRECT']
         self.assertLessEqual(max(abs(command.yaw_dot) for command in direct_outputs),
                              math.radians(self.config['direct']['max_yaw_rate_deg']) + 1e-8)
-        # C→D、F→G 直接到点悬停；G→H 之后 H 只是经过点，不再进入 DWELL。
+        # C→D、D→E、G→H 直接到点悬停；只有 H→I 的 I 是经过点，不进入 DWELL。
         visited = {mission.vector(entry[2].position) for entry in trace if entry[1] == 'DWELL'}
-        self.assertEqual(visited, {tuple(runner.config['points'][label]['xyz']) for label in ('D', 'G')})
+        self.assertEqual(visited, {tuple(runner.config['points'][label]['xyz']) for label in ('D', 'E', 'H')})
         d_outputs = [entry[2] for entry in trace if entry[1] == 'DWELL']
         self.assertLessEqual(abs(mission.wrap(d_outputs[0].yaw + math.pi / 2)), tolerance,
                              'D 的直控段结束时应保持模拟配置的 -90°')
-        # H 是经过点：进入 pass_radius 就发 I 目标，且切换那一刻还没飞到 H。
-        i_start = next(entry[0] for entry in trace if entry[1] == 'WAIT_PLANNER_I')
-        i_position = next(entry[2] for entry in trace if entry[1] == 'WAIT_PLANNER_I')
-        h_xyz = tuple(runner.config['points']['H']['xyz'])
-        self.assertLessEqual(math.dist(mission.vector(i_position.position), h_xyz),
+        # I 是经过点：进入 pass_radius 就发 J 目标，且切换那一刻还没飞到 I。
+        i_start = next(entry[0] for entry in trace if entry[1] == 'WAIT_PLANNER_J')
+        i_position = next(entry[2] for entry in trace if entry[1] == 'WAIT_PLANNER_J')
+        i_xyz = tuple(runner.config['points']['I']['xyz'])
+        self.assertLessEqual(math.dist(mission.vector(i_position.position), i_xyz),
                              self.config['mission']['pass_radius'] + 1e-6)
         self.assertNotIn('DWELL', [entry[1] for entry in trace if entry[0] >= i_start])
-        for label in ('E', 'F', 'I'):
+        for label in ('F', 'G', 'J'):
             outputs = [entry[2] for entry in trace if entry[1] == 'PLANNER_' + label]
             self.assertLessEqual(math.dist(mission.vector(outputs[-1].position),
                                            tuple(runner.config['points'][label]['xyz'])),
@@ -1094,10 +1129,10 @@ class HazardDrop(unittest.TestCase):
         self.assertAlmostEqual(mission.vector(resumed[2].position)[2],
                                self.config['points']['C']['xyz'][2] + runner.origin[2], places=2)
         # 投放仍然完成整条任务并降落。
-        self.assertIn('PLANNER_E', phases)
-        self.assertIn('PLANNER_I', phases)
+        self.assertIn('PLANNER_F', phases)
+        self.assertIn('PLANNER_J', phases)
         self.assertEqual(runner.stage, 'LANDING')
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
         # 必须先连续稳定悬停 hover_seconds 才允许下降。
         arrival = next(entry[0] for entry in trace
                        if entry[1] == 'PLANNER_C'
@@ -1118,8 +1153,131 @@ class HazardDrop(unittest.TestCase):
         self.assertIn('DWELL', phases)
         self.assertIn('DROP_DESCEND', phases, 'D 是直控段到点后的 DWELL，也必须支持投放')
         runner.begin_services.assert_called_once()
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
         self.assertEqual(runner.stage, 'LANDING')
+
+    def test_other_label_leaves_without_waiting_out_the_timeout(self):
+        runner = self.runner
+        other = dict(label='其它标识', confidence=1.0, class_id=1, cx=320.0, cy=240.0,
+                     x1=280.0, y1=200.0, x2=360.0, y2=280.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            runner.config['detection']['confirmation_source'] = 'detections'
+            runner._recognition_point = 'C'
+            self.feed([other])
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', self.clock.now),
+                             'continue')
+            # 上一点的其它标识不能让下一个航点跳过自己的识别。
+            self.assertEqual(runner.plan_decision(self.clock.now, 'D', self.clock.now),
+                             'wait')
+            self.feed([])
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', self.clock.now),
+                             'wait')
+
+    def recognize(self, mode='sign', class_id=0, label='危险品标识', **changes):
+        result = dict(stamp=1000.0, mode=mode, class_id=class_id, label=label,
+                      confidence=1.0)
+        result.update(changes)
+        self.runner.receive(SimpleNamespace(data=json.dumps(result)), 'recognition')
+
+    def test_drop_waits_three_seconds_from_vlm_result_without_any_cv_box(self):
+        runner = self.runner
+        self.enable_drop()
+        values = runner.drop_settings()
+        self.assertEqual(values['tracking_seconds'], 3.0)
+        for point, mode, class_id, label in (('C', 'sign', 0, '危险品标识'),
+                                             ('F', 'portrait', 2, '救助人员')):
+            with self.subTest(point=point), mock.patch.object(
+                    mission.time, 'monotonic', self.clock.monotonic):
+                runner.request_recognition(point)
+                settled = self.clock.now - values['hover_seconds'] - 0.1
+                self.recognize(mode, class_id, label)
+                self.clock.sleep(2.99)
+                self.assertEqual(runner.plan_decision(self.clock.now, point, settled), 'wait')
+                self.clock.sleep(0.02)
+                self.assertEqual(runner.plan_decision(self.clock.now, point, settled), 'drop')
+
+    def test_losing_the_box_does_not_restart_or_cancel_tracking(self):
+        runner = self.runner
+        self.enable_drop()
+        values = runner.drop_settings()
+        settled = self.clock.now - values['hover_seconds'] - 0.1
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            runner.request_recognition('C')
+            self.recognize()
+            for _ in range(29):
+                self.feed([])
+                self.clock.sleep(0.1)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'wait')
+            self.recognize(class_id=1, label='其它标识')
+            self.clock.sleep(0.11)
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', settled), 'drop')
+
+    def test_cv_box_alone_does_not_confirm_vlm_target(self):
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.runner.request_recognition('C')
+            self.feed([dict(label='危险品标识', confidence=1.0)])
+            self.clock.sleep(3.1)
+            self.assertEqual(self.runner._tracking_started, {})
+            self.assertEqual(self.runner.plan_decision(self.clock.now, 'C', 99.0), 'wait')
+
+    def test_old_session_config_defaults_to_vlm_and_three_seconds(self):
+        detection = self.runner.config['detection']
+        detection.pop('confirmation_source', None)
+        detection.pop('tracking_seconds', None)
+        detection['stable_seconds'] = 4.0
+        values = self.runner.drop_settings()
+        self.assertEqual(values['confirmation_source'], 'vlm')
+        self.assertEqual(values['tracking_seconds'], 3.0)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.runner.request_recognition('C')
+            self.recognize()
+            self.clock.sleep(3.01)
+            self.assertEqual(self.runner.plan_decision(self.clock.now, 'C', 99.0), 'drop')
+
+    def test_tracking_not_cancelled_by_recognition_timeout(self):
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.runner.request_recognition('C')
+            settled = self.clock.now
+            self.clock.sleep(self.runner.drop_settings()['wait_timeout'] - 0.1)
+            self.recognize()
+            self.clock.sleep(0.2)
+            self.assertEqual(self.runner.plan_decision(self.clock.now, 'C', settled), 'wait')
+            self.clock.sleep(2.81)
+            self.assertEqual(self.runner.plan_decision(self.clock.now, 'C', settled), 'drop')
+
+    def test_invalid_or_wrong_mode_results_never_confirm(self):
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            self.recognize()
+            self.assertEqual(self.runner._tracking_started, {})
+            self.runner.request_recognition('C')
+            for changes in (dict(stamp=999.0), dict(stamp=1001.0),
+                            dict(confidence=0.1), dict(confidence=float('nan')),
+                            dict(mode='portrait'), dict(class_id=True),
+                            dict(class_id=2), dict(label='其它标识')):
+                with self.subTest(changes=changes):
+                    self.recognize(**changes)
+                    self.assertEqual(self.runner._tracking_started, {})
+            for text in ('null', '[]', 'not json'):
+                self.runner.receive(SimpleNamespace(data=text), 'recognition')
+            self.clock.sleep(3.1)
+            self.assertEqual(self.runner.plan_decision(self.clock.now, 'C', 99.0), 'wait')
+
+    def test_old_result_from_before_new_point_trigger_is_rejected(self):
+        self.runner.request_recognition('D')
+        self.recognize(stamp=999.9)
+        self.assertEqual(self.runner._tracking_started, {})
+
+    def test_new_point_resets_previous_detection_and_tracking(self):
+        runner = self.runner
+        self.enable_drop()
+        runner._recognition_point = 'C'
+        runner.vote_buffer('hazard_drop').append((self.clock.now, True))
+        runner.hazard_last = self.clock.now
+        runner._tracking_started['hazard_drop'] = ('C', self.clock.now - 10.0)
+        self.assertIs(runner.request_recognition('D'), False)
+        self.assertNotIn('hazard_drop', runner._tracking_started)
+        self.assertEqual(list(runner.vote_buffer('hazard_drop')), [])
+        self.assertIsNone(runner.hazard_last)
 
     def test_no_detection_waits_then_continues_without_dropping(self):
         runner, clock = self.runner, self.clock
@@ -1130,7 +1288,7 @@ class HazardDrop(unittest.TestCase):
         phases = [entry[1] for entry in trace]
         self.assertNotIn('DROP_DESCEND', phases)
         runner.begin_services.assert_not_called()
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'], '检测不到时必须继续整条任务')
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'], '检测不到时必须继续整条任务')
         self.assertEqual(runner.stage, 'LANDING')
         # C 点按 wait_timeout 等满后继续，而不是立刻离开或永久悬停。
         first_c = next(entry[0] for entry in trace if entry[1] == 'PLANNER_C')
@@ -1168,8 +1326,20 @@ class HazardDrop(unittest.TestCase):
             runner.receive(SimpleNamespace(data='not json'), 'detections')
             self.assertFalse(self.last_vote(), '坏消息按未检测处理')
 
-            # 时间窗投票：窗口内票数不足不确认；比例不足不确认；达标才确认。
-            self.assertEqual(values['vote_mode'], 'time', '默认应为时间窗投票')
+            # 默认 none（VLM 单次确认）：最近一帧命中即确认，未命中/断更不确认。
+            self.assertEqual(values['vote_mode'], 'none', '默认应为 VLM 单次确认')
+            runner.hazard_votes.clear()
+            self.feed([centered])
+            self.assertTrue(runner.hazard_stable(self.clock.now, values), '最近一帧命中即确认')
+            self.feed([person])
+            self.assertFalse(runner.hazard_stable(self.clock.now, values), '最近一帧未命中不能确认')
+            self.assertFalse(runner.hazard_stable(self.clock.now + values['max_age'] * 2.0, values),
+                             '检测断更不能确认')
+
+            # 切回时间窗投票：窗口内票数不足不确认；比例不足不确认；达标才确认。
+            runner.config['detection']['vote_mode'] = 'time'
+            runner.config['detection']['vote_frames'] = 5
+            values = runner.drop_settings()
             frames = values['vote_frames']
             runner.hazard_votes.clear()
             for _ in range(frames - 1):
@@ -1246,11 +1416,15 @@ class HazardDrop(unittest.TestCase):
         # 时间窗模式下用最近 0.5s 内的票；帧数模式同样满足（最近 N 帧全命中）。
         runner.hazard_votes = [(105.0 - 0.01 * index, True) for index in range(samples)]
         runner.hazard_last = 104.99
+        runner._recognition_point = 'C'
+        runner._tracking_started['hazard_drop'] = ('C', 100.0)
         self.assertEqual(runner.drop_decision(105.0, 'C', 99.0), 'drop')
         runner.drop_done = True
         self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'continue',
                          'once=true 时第二次到点不再投放')
         self.drop_config()['once'] = False
+        runner._recognition_point = 'D'
+        runner._tracking_started['hazard_drop'] = ('D', 100.0)
         self.assertEqual(runner.drop_decision(105.0, 'D', 99.0), 'drop')
 
     def test_drop_settings_reject_unsafe_values(self):
@@ -1270,6 +1444,29 @@ class HazardDrop(unittest.TestCase):
         self.drop_config()['offset_body'] = [0.6, 0.0]
         with self.assertRaisesRegex(mission.FlightError, '不能超过'):
             runner.drop_settings()
+
+    def test_tracking_settings_reject_invalid_values(self):
+        for value in (-1.0, float('nan'), float('inf'), True, '3'):
+            with self.subTest(value=value):
+                self.drop_config()['tracking_seconds'] = value
+                with self.assertRaisesRegex(mission.FlightError, 'tracking_seconds'):
+                    self.runner.drop_settings()
+
+    def test_tensor_rt_votes_can_start_the_same_fixed_timer(self):
+        runner = self.runner
+        runner.config['detection'].update(confirmation_source='detections',
+                                           vote_mode='frames', vote_frames=3)
+        with mock.patch.object(mission.time, 'monotonic', self.clock.monotonic):
+            runner.request_recognition('C')
+            hit = dict(label='危险品标识', confidence=0.9)
+            self.feed([hit])
+            self.feed([hit])
+            self.assertEqual(runner._tracking_started, {})
+            self.feed([hit])
+            self.assertIn('hazard_drop', runner._tracking_started)
+            self.clock.sleep(3.01)
+            self.feed([])
+            self.assertEqual(runner.plan_decision(self.clock.now, 'C', 99.0), 'drop')
 
     def test_servo_push_reports_failure_without_raising(self):
         try:
@@ -1301,7 +1498,7 @@ class HazardDrop(unittest.TestCase):
 
 
 class RescueDropAndGroundOffsetTest(unittest.TestCase):
-    """救援物资降高度测试（dry_run，不投放）与航点地面高度误差 z_offset。"""
+    """救援物资投放（默认真实投放；dry_run 可作为回归测试）与航点地面高度误差 z_offset。"""
 
     setUp = RuntimeRules.setUp
     simulate_takeoff = RuntimeRules.simulate_takeoff
@@ -1320,17 +1517,29 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         for config in (self.config, self.runner.config, self.runner.source_config):
             config['rescue_drop'].update(changes)
 
-    def test_shipped_config_is_rescue_dry_run(self):
+    def test_shipped_config_enables_real_rescue_drop(self):
         rescue = self.config['rescue_drop']
-        self.assertTrue(rescue['enabled'], '默认启用救援物资降高度测试')
-        self.assertTrue(rescue['dry_run'], '当前阶段只降高度、不投放')
-        self.assertEqual(list(rescue['points']), ['E', 'F', 'G'])
-        self.assertFalse(rescue['once'], 'E/F/G 各自独立判断')
+        self.assertTrue(rescue['enabled'], '默认启用救援物资投放')
+        self.assertFalse(rescue['dry_run'], '2026-11-26 起改为真实投放，预检要求舵机服务在线')
+        self.assertEqual(list(rescue['points']), ['F', 'G', 'H'])
+        self.assertFalse(rescue['once'], 'F/G/H 各自独立判断')
 
-    def test_detection_at_e_descends_holds_and_climbs_without_push(self):
+    def test_payloads_do_not_synthesize_legacy_service(self):
+        """显式配置 payloads 时不能再生成默认 /servo/push，否则预检永远等不到该服务。"""
+        values = self.runner.rescue_settings()
+        self.assertEqual(values['steps'], [], '有 payloads 时不应再生成单次投放步骤')
+        services = {service for payload in values['payloads']
+                    for step in payload['steps'] for service in step['services']}
+        self.assertNotIn('/servo/push', services, '预检不应等待并不存在的 /servo/push')
+        self.assertIn('/servo4/push', services)
+        self.assertIn('/servo3/push', services)
+
+    def test_detection_at_f_descends_holds_and_climbs_without_push(self):
         runner = self.runner
         runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
-        state, trace, goals = self.simulate_full_mission(rescue='E')
+        # 出厂配置已改为真实投放；本用例验证 dry_run 回归测试分支不推舵机。
+        self.set_rescue(dry_run=True)
+        state, trace, goals = self.simulate_full_mission(rescue='F')
         self.run_mission()
         phases = [entry[1] for entry in trace]
         self.assertIn('DROP_DESCEND', phases)
@@ -1341,18 +1550,19 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         lowest = min(mission.vector(entry[2].position)[2] for entry in trace
                      if entry[1] in ('DROP_DESCEND', 'DROP_PUSH'))
         self.assertAlmostEqual(lowest, floor, places=2)
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
         self.assertEqual(runner.stage, 'LANDING')
 
     def test_detection_at_two_points_triggers_both(self):
         runner = self.runner
         runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
-        state, trace, _ = self.simulate_full_mission(rescue=('E', 'G'))
+        self.set_rescue(dry_run=True)
+        state, trace, _ = self.simulate_full_mission(rescue=('F', 'H'))
         self.run_mission()
         starts = [index for index, entry in enumerate(trace)
                   if entry[1] == 'DROP_DESCEND'
                   and (index == 0 or trace[index - 1][1] != 'DROP_DESCEND')]
-        self.assertEqual(len(starts), 2, 'once=false 时 E、G 两点都应触发降高度')
+        self.assertEqual(len(starts), 2, 'once=false 时 F、H 两点都应触发降高度')
         runner.begin_services.assert_not_called()
 
     def test_no_detection_does_not_descend(self):
@@ -1363,23 +1573,23 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         phases = [entry[1] for entry in trace]
         self.assertNotIn('DROP_DESCEND', phases)
         runner.begin_services.assert_not_called()
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
         self.assertEqual(runner.stage, 'LANDING')
 
     def test_rescue_payloads_consumed_in_order(self):
         runner = self.runner
         runner.begin_services = mock.Mock(return_value=dict(ok=True, results=[]))
         self.set_rescue(dry_run=False)
-        state, trace, goals = self.simulate_full_mission(rescue=('E', 'G'))
+        state, trace, goals = self.simulate_full_mission(rescue=('F', 'H'))
         self.run_mission()
         services = [call.args[0] for call in runner.begin_services.call_args_list]
         self.assertEqual(services, [
-            ['/servo4/push'],                          # E 点：2 号物资
-            ['/servo1/push', '/servo2/push'],          # G 点：先下放 3/4 号
-            ['/servo3/push'],                          # G 点：投 3 号
+            ['/servo4/push'],                          # F 点：2 号物资
+            ['/servo1/push', '/servo2/push'],          # H 点：先下放 3/4 号
+            ['/servo3/push'],                          # H 点：投 3 号
         ], '救援物资应按 2→（下放）→3 的顺序投放')
         self.assertEqual(runner.rescue_index, 2, '投完 2、3 号后，下一个是 4 号')
-        self.assertEqual(goals, ['B', 'C', 'E', 'F', 'I'])
+        self.assertEqual(goals, ['B', 'C', 'F', 'G', 'J'])
         self.assertEqual(runner.stage, 'LANDING')
 
     def test_payload_offset_world_math(self):
@@ -1424,8 +1634,8 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
         resolved = mission.resolve_config(runner.source_config, origin)
         runner.config, runner.origin = resolved, origin
         runner.rescue_index = 0
-        point = resolved['points']['E']
-        motion = runner.start_drop(origin, 0.0, point, 100.0, 'E')
+        point = resolved['points']['F']
+        motion = runner.start_drop(origin, 0.0, point, 100.0, 'F')
         self.assertAlmostEqual(motion['target']['xyz'][0], point['xyz'][0] + 0.075, places=6,
                                msg='2 号挂点在机尾后方，机体要前移 7.5cm')
 
@@ -1442,7 +1652,7 @@ class RescueDropAndGroundOffsetTest(unittest.TestCase):
 
     def test_rescue_settings_reject_other_points(self):
         self.rescue_config()['points'] = ['C']
-        with self.assertRaisesRegex(mission.FlightError, '只允许 E/F/G'):
+        with self.assertRaisesRegex(mission.FlightError, '只允许 F/G/H'):
             self.runner.rescue_settings()
 
     def test_z_offset_moves_targets_and_drop_floor(self):

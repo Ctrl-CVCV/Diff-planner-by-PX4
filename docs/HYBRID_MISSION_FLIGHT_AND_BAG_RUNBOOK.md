@@ -12,7 +12,7 @@
 - F 是 Planner→直控的**切换点**：Planner 到点后同样连续稳定悬停 3 秒，再开始直控飞 G。
 - G 由普通 PX4Ctrl 直控，到点连续稳定悬停 3 秒；H 是**经过点**（进入 `pass_radius` 即发 I，不悬停），之后重新交给 Planner 飞 I。
 - I 是**终点**：相对 A 的 `[0,0,0.8]`（回到 A 正上方、保持飞行高度，**不要填 z=0 的地面点**），航向 180°、与起飞时相反；连续稳定 3 秒后自动降落。
-- B/C/D/E/F/G/H/I 的 `measured` 标记以本轮 YAML 为准；任何 `measured: false` 的点都会让 `--execute` 被拒绝，必须实地测量后填入坐标并改成 `measured: true`。
+- B/C/D/E/F/G/H/I/J 的 `measured` 标记以本轮 YAML 为准；任何 `measured: false` 的点都会让 `--execute` 被拒绝，必须实地测量后填入坐标并改成 `measured: true`。
 
 ## 1. 终端分工和绝对不能混用的内容
 
@@ -25,7 +25,7 @@
 | 3 | 混合任务专用 Planner/轨迹服务器 | 落地锁桨后 |
 | 4 | rosbag 录制与地图收包监视 | 落地锁桨后继续录 5～10 秒，再正常关闭 |
 | 5 | RViz 实时看图、只读检查 | 根据需要 |
-| 6 | 混合脚本预检、确认后执行 | 到 DONE（I 降落后）；异常时由飞手接管 |
+| 6 | 混合脚本预检、确认后执行 | 到 DONE（J 降落后）；异常时由飞手接管 |
 | 7 | YOLO 视觉识别（`yolo_trt_ros`；投放靠它出检测，未启动则不会投放） | 与飞行链无关，随时可停；见第 14 节 |
 
 所有实机终端必须连接同一个、已确认的实机 `ROS_MASTER_URI`；新开终端要重新 `source`，环境变量不会自动跨终端继承。
@@ -47,7 +47,7 @@ Diff-Planner → traj_server → /drone_0_mission/planner_cmd
                            /setpoints_cmd → PX4Ctrl
 ```
 
-Planner 段（A→B、B→C、D→E、E→F、H→I）转发规划指令；C→D、F→G、G→H 三段由脚本发布 PX4Ctrl 原生的 `quadrotor_msgs/PositionCommand`，不走 MAVROS 位置控制接口。
+Planner 段（A→B、B→C、E→F、F→G、I→J）转发规划指令；C→D、D→E、G→H、H→I 四段由脚本发布 PX4Ctrl 原生的 `quadrotor_msgs/PositionCommand`，不走 MAVROS 位置控制接口。
 
 ## 2. 终端 0：地面准备、创建本轮目录
 
@@ -99,10 +99,10 @@ nano "$FLIGHT_DIR/mission.yaml"
 - 坐标轴平行 **world**，不是“机头前方/右方”；`yaw_deg` 也是 **world 绝对航向角**，不是相对起飞机头转角。
 - 地面应静止，当前航向须满足 A 的 yaw 要求。不要为了通过检查直接填入不理解的角度。
 - `takeoff.height` 默认 0.8 米，须与 PX4Ctrl 的 `auto_takeoff_land/takeoff_height` 一致。实际悬停 world z 是地面 EKF z 加 0.8，不一定恰好是 0.8。
-- 核对 B/C/D/E/F/G/H/I、实际可飞区域、速度和到点容差。**I 下方必须能降落；起飞竖直通道和 C→D、F→G、G→H 不经过 Planner 避障。**
+- 核对 B/C/D/E/F/G/H/I/J、实际可飞区域、速度和到点容差。**J 下方必须能降落；起飞竖直通道和 C→D、D→E、G→H、H→I 不经过 Planner 避障。**
 - `mission.pass_radius` 是 B 的切换半径：太小会为了“碰到 B”而减速甚至停住，太大会提前切 C、实际轨迹更圆滑地切角。它必须小于起飞悬停点到 B 的距离，否则脚本预检直接报错（B 会被立即跳过）。
 - 任何尚未实测的航点都要保留 `measured: false`；脚本预览会打印警告，`--execute` 会被拒绝。这是防止用占位坐标实飞的硬保护，不要为了跑通而删掉。
-- `mission.arrival_dwell`（3 s）用于 B、C、D、E、F、G 的到点悬停（只有 H 是经过点，不计时）；`mission.hover_seconds` 用于 I（最后一点）的悬停；`landing.target_tolerance`（0.03 m）/ `target_speed`（0.05 m/s）是发 LAND 前的落点判据，`target_timeout`（8 s）是收不紧时的兜底；`landing.approach_height` / `approach_speed` / `approach_tolerance` / `approach_timeout` 是**默认关闭**的可选贴地进近，填 0 即不做进近（判据与原因见说明第 10 节）。`landing.on_ground_height`（0.20 m）是落地收尾判据：PX4 迟迟不报 `ON_GROUND` 时，PX4Ctrl 会在自身落地判据成立 5 s 后交还飞手，脚本据实测离地高度收尾并提示杀桨（判据与原因见说明第 10 节）。
+- `mission.arrival_dwell`（3 s）用于 B、C、D、E、F、G、H 的到点悬停（只有 I 是经过点，不计时）；`mission.hover_seconds` 用于 J（最后一点）的悬停；`landing.target_tolerance`（0.03 m）/ `target_speed`（0.05 m/s）是发 LAND 前的落点判据，`target_timeout`（8 s）是收不紧时的兜底；`landing.approach_height` / `approach_speed` / `approach_tolerance` / `approach_timeout` 是**默认关闭**的可选贴地进近，填 0 即不做进近（判据与原因见说明第 10 节）。`landing.on_ground_height`（0.20 m）是落地收尾判据：PX4 迟迟不报 `ON_GROUND` 时，PX4Ctrl 会在自身落地判据成立 5 s 后交还飞手，脚本据实测离地高度收尾并提示杀桨（判据与原因见说明第 10 节）。
 - I 的 z 必须填飞行高度（例如 0.8），不要填 `0`：`[0,0,0]` 是地面点，Planner 会把飞机规划到地面高度。
 - Planner 虚拟上下边界是绝对 world z，不随 A 平移。不要把相对飞行高度直接当作虚拟边界。
 - 2026-10-27 已从任务脚本移除坐标包围盒及虚拟上下边界预检；旧 YAML 的 `min_xyz`、`max_xyz`、`virtual_wall_margin` 会被忽略。Planner 本身的地图范围、虚拟墙和避障逻辑未修改，不代表任意目标都可达。I 若填 `[0,0,0]` 是地面点；要回到 A 上方 0.8 米悬停后降落，应填 `[0,0,0.8]`。
@@ -218,9 +218,9 @@ rosparam get /drone_0_diff_planner_node/grid_map
 - `hold_at_end=true`，`flight_type=1`。地图参数是本次运行节点值，不是凭记忆填写的旧膨胀值。
 - 飞机尚未起飞、未收到目标时没有规划指令可以正常；但定位和地图必须有数据。
 
-每轮任务最终/保护降落可能给 Planner 发急停；**新一轮在落地锁桨后重启这套隔离 Planner**，不要在空中重启。正常情况下 Planner 段（B、C、E、F、I）与直控段（C→D、F→G、G→H）之间只切换指令来源，不中途发 Planner 急停。
+每轮任务最终/保护降落可能给 Planner 发急停；**新一轮在落地锁桨后重启这套隔离 Planner**，不要在空中重启。正常情况下 Planner 段（B、C、F、G、J）与直控段（C→D、D→E、G→H、H→I）之间只切换指令来源，不中途发 Planner 急停。
 
-注意：D→E→F 与 H→I 都是 Planner 段，脚本会复用同一个 Planner 节点连续发目标，所以本轮录到的轨迹 ID 必须单调递增（Planner 已修复 `setGlobalTraj` 重置 `traj_id` 的问题）。若日志再次出现“发送某个点后未收到新轨迹 ID”，先查 Planner 是否收到 `/goal`、是否有新轨迹，不要靠关闭检查来绕过。
+注意：E→F→G 与 I→J 都是 Planner 段，脚本会复用同一个 Planner 节点连续发目标，所以本轮录到的轨迹 ID 必须单调递增（Planner 已修复 `setGlobalTraj` 重置 `traj_id` 的问题）。若日志再次出现“发送某个点后未收到新轨迹 ID”，先查 Planner 是否收到 `/goal`、是否有新轨迹，不要靠关闭检查来绕过。
 
 ## 6. 终端 4：先开始录 bag，再执行任务
 
@@ -302,7 +302,7 @@ rviz -d "$HOME/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/launch/inclu
 - 打开/关闭 `Occupancy Raw`、`Occupancy Inflated`，交替看原始与膨胀地图；从俯视和侧视检查实际障碍、地面及可用通道。
 - 黄色（实测）与绿色（指令）两条线的末端应基本重合；两条线的历史形状不同，说明指令与跟踪存在偏差（绿色是 Planner/任务发出的参考，黄色是 EKF 实测）。
 - 看轨迹线末端（当前 EKF 位置）与地图是否一致，确认 world X/Y 方向对应真实场地，而不是按机头猜方向。
-- 检查起飞竖直通道、A→B、B→C、D→E、E→F、H→I 规划区域、C→D、F→G、G→H 直控通道、I 下方降落区。膨胀地图不应把起飞悬停点或目标包在障碍里。
+- 检查起飞竖直通道、A→B、B→C、E→F、F→G、I→J 规划区域、C→D、D→E、G→H、H→I 直控通道、J 下方降落区。膨胀地图不应把起飞悬停点或目标包在障碍里。
 - 灰色注册点云默认关闭。`/cloud_registered` 的 `camera_init` 与 `world` 若缺真实 TF，不要用随意的单位变换或改 frame_id 强行对齐；见[坐标链路核查](FRAME_TRANSFORM_AUDIT_20261020.md)。
 - Points 显示尺寸不等于栅格分辨率。分辨率和膨胀以运行参数及实际地图为准，不能只按画面方块大小判断。
 
@@ -368,7 +368,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/check_dif
 
 工具读取正在运行的地图参数和消息，推算有效分辨率/膨胀范围。`--check-z` 是 **world 绝对高度**；`--goal-dx/dy` 是相对采样时当前位置的 world 偏移，不会发送 `/goal`。
 
-它只是地面局部探测，不会完整验证 A→B、B→C、C→D、D→E、E→F、F→G、G→H、H→I 或 I 降落通道；不能拿一次报告代替整条任务检查。这里不使用检查器的旧 `--rviz` 配置，统一用上面的实时 RViz 配置。
+它只是地面局部探测，不会完整验证 A→B、B→C、C→D、D→E、E→F、F→G、G→H、H→I、I→J 或 J 降落通道；不能拿一次报告代替整条任务检查。这里不使用检查器的旧 `--rviz` 配置，统一用上面的实时 RViz 配置。
 
 ## 8. 终端 6：先只读预检，确认没有提前手动起飞
 
@@ -388,7 +388,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 ```
 
-`--check` 只订阅/查询，不注册飞行指令发布端，不起飞。查看输出的实际 A 原点和转换后的 hover/B/C/D/E/F/G/H/I **world 坐标**，与 RViz 一致后才继续；预检进程退出后再执行任务，不并行启动两份脚本。
+`--check` 只订阅/查询，不注册飞行指令发布端，不起飞。查看输出的实际 A 原点和转换后的 hover/B/C/D/E/F/G/H/I/J **world 坐标**，与 RViz 一致后才继续；预检进程退出后再执行任务，不并行启动两份脚本。
 
 如果预览打印“航点 F/G/H 尚未实测（measured: false）”，说明 `mission.yaml` 里还是占位坐标。此时 `--check` 仍可做地图/定位核对，但 `--execute` 会被直接拒绝，必须先把未实测航点的坐标填好并改成 `measured: true`。
 
@@ -396,7 +396,7 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 
 ## 9. 终端 6：程控起飞并执行混合任务
 
-确认录包终端还在运行、地图持续更新、飞手可接管、场地无人，所有实际路径和 I 降落区已人工检查。然后运行：
+确认录包终端还在运行、地图持续更新、飞手可接管、场地无人，所有实际路径和 J 降落区已人工检查。然后运行：
 
 ```bash
 python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mission.py \
@@ -413,16 +413,17 @@ python3 ~/gcs_ws/src/Diff-Planner/src/diff_planner/plan_manage/scripts/hybrid_mi
 MISSION
 ```
 
-确认后脚本再次检查、锁定本轮 A，发送**一次** TAKEOFF，由 PX4Ctrl 切 OFFBOARD、自动解锁并起飞；不自动重试，B/C/D/E/F/G/H/I 目标全部由脚本自动发送。预期阶段为：
+确认后脚本再次检查、锁定本轮 A，发送**一次** TAKEOFF，由 PX4Ctrl 切 OFFBOARD、自动解锁并起飞；不自动重试，B/C/D/E/F/G/H/I/J 目标全部由脚本自动发送。预期阶段为：
 
 ```text
 TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B
         → WAIT_PLANNER_C → PLANNER_C
-        → DIRECT → DWELL
-        → WAIT_PLANNER_E → PLANNER_E
-        → WAIT_PLANNER_F → PLANNER_F
-        → DIRECT → DWELL → DIRECT → DWELL
-        → WAIT_PLANNER_I → PLANNER_I → HOLD → LANDING → DONE
+        → DIRECT → DWELL（D）
+        → DIRECT → DWELL（E）→ WAIT_PLANNER_F → PLANNER_F
+        → WAIT_PLANNER_G → PLANNER_G
+        → DIRECT → DWELL（H）
+        → DIRECT（I 经过点）→ WAIT_PLANNER_J → PLANNER_J
+        → HOLD → LANDING → DONE
 ```
 
 | 阶段 | 正常行为 |
@@ -431,14 +432,14 @@ TAKEOFF → TAKEOFF_HOVER → WAIT_PLANNER_B → PLANNER_B
 | WAIT_PLANNER_B / PLANNER_B | 发一次 B 目标，收到有效规划指令后转发；B 到点后连续稳定悬停 3 秒，再发 C |
 | WAIT_PLANNER_C | 等 C 的新轨迹。等待期间继续转发上一段 B 轨迹（“桥接”），避免在切换点急停；不能用 B 末端保持冒充 C 轨迹 |
 | PLANNER_C | 转发 C 轨迹；到点后连续稳定 3 秒（`arrival_dwell`）再切直控 |
-| DIRECT（C→D） | Planner 不参与 C→D 轨迹，脚本向 PX4Ctrl 连续发平滑位置指令 |
-| DWELL（D） | D 直控到点后连续稳定 3 秒，再发 E 目标给 Planner |
-| WAIT_PLANNER_E / PLANNER_E | Planner 接管 D→E；要求新的轨迹 ID，旧轨迹不放行；E 到点稳定 3 秒 |
-| WAIT_PLANNER_F / PLANNER_F | Planner 接管 E→F；到点后连续稳定 3 秒，再切直控飞 G |
-| DIRECT（F→G）/ DWELL（G） | 直控到 G，连续稳定 3 秒后开始直控 H |
-| DIRECT（G→H） | 直控到 H；H 是**经过点**，距离 ≤ `pass_radius` 就立刻发 I 目标，不悬停 |
-| WAIT_PLANNER_I / PLANNER_I | 等 I 的新轨迹。等待期间继续跟踪 G→H 的直控参考（不停车）；旧轨迹不放行 |
-| HOLD / DESCEND | I 到点连续稳定 3 秒（`hover_seconds`），再等落点参考收敛：实测误差 ≤ `landing/target_tolerance`(0.03 m) 且速度 ≤ `target_speed`(0.05 m/s)，最多等 `target_timeout`(8 s)；仅当 `landing/approach_height>0`（默认 0，不启用）时中间多一段位置控制下降 |
+| DIRECT（C→D）/ DWELL（D） | Planner 不参与 C→D，脚本向 PX4Ctrl 连续发平滑位置指令；D 稳定 3 秒后直控 E |
+| DIRECT（D→E）/ DWELL（E） | 直控到 E（C 的 +x 0.6 m、机头 90°），连续稳定 3 秒后再发 F 目标给 Planner |
+| WAIT_PLANNER_F / PLANNER_F | Planner 接管 E→F；要求新的轨迹 ID，旧轨迹不放行；F 到点稳定 3 秒 |
+| WAIT_PLANNER_G / PLANNER_G | Planner 接管 F→G；到点后连续稳定 3 秒，再切直控飞 H |
+| DIRECT（G→H）/ DWELL（H） | 直控到 H，连续稳定 3 秒后开始直控 I |
+| DIRECT（H→I） | 直控到 I；I 是**经过点**，距离 ≤ `pass_radius` 就立刻发 J 目标，不悬停 |
+| WAIT_PLANNER_J / PLANNER_J | 等 J 的新轨迹。等待期间继续跟踪 H→I 的直控参考（不停车）；旧轨迹不放行 |
+| HOLD / DESCEND | J 到点连续稳定 3 秒（`hover_seconds`），再等落点参考收敛：实测误差 ≤ `landing/target_tolerance`(0.03 m) 且速度 ≤ `target_speed`(0.05 m/s)，最多等 `target_timeout`(8 s)；仅当 `landing/approach_height>0`（默认 0，不启用）时中间多一段位置控制下降 |
 | LANDING | 判据满足（或进近到位）后请求一次 LAND，并打印当时的实测误差；交给 PX4Ctrl 完成最后一段并锁桨 |
 | DONE | 同时确认落地和 FCU 已锁桨，不是只发出 LAND 就算完成 |
 
@@ -693,9 +694,9 @@ PY
 
 - [ ] 已落地未解锁，飞手接管流程已确认；无起飞振荡/定位发散等未解决问题。
 - [ ] 只有一套 EKF、PX4Ctrl 和混合专用 Planner；没有旧目标/控制发布脚本。
-- [ ] 本轮 `mission.yaml` 已预览；A/world/yaw、B/C/D/E/F/G/H/I、实际可飞区域和 I 降落区已核实。
+- [ ] 本轮 `mission.yaml` 已预览；A/world/yaw、B/C/D/E/F/G/H/I/J、实际可飞区域和 J 降落区已核实。
 - [ ] F/G/H 已实测并改为 `measured: true`（或明确知道本轮不飞）；`pass_radius` 小于起飞悬停点到 B 的距离。
-- [ ] RAW/膨胀地图持续更新，坐标对齐；起飞通道、Planner 段（A→B、B→C、D→E、E→F、H→I）与直控段（C→D、F→G、G→H）均人工确认。
+- [ ] RAW/膨胀地图持续更新，坐标对齐；起飞通道、Planner 段（A→B、B→C、E→F、F→G、I→J）与直控段（C→D、D→E、G→H、H→I）均人工确认。
 - [ ] 录包已实际开始且地图监视正常，磁盘/负载合格；不是仅打印了命令。
 - [ ] 危险品投放：`/servo/push` 服务可用（`px4_servo` 已启动、`ready: true`），YOLO 检测话题 `/yolo/detections` 已有数据，投放点 C/D、`height`、`wait_timeout` 已确认；本轮不投放则用 `--no-hazard-drop`。
 - [ ] 舵机推出后不自动收回（`hold_s=0`）已确认；投放成功后需 `/servo/retract` 或上锁才收回，`PWM_AUX_DIS6` 为 500。
@@ -704,12 +705,42 @@ PY
 
 ## 14. YOLO 视觉识别（投放默认启用，需要它出检测）
 
-`yolo_trt_ros`（USB 相机 + TensorRT 检测，队友新增）只订阅图像、发布检测结果，**不订阅也不发布任何飞行指令话题**，与第 1～13 节的飞行链相互独立；但自 2026-10-31 起 `hazard_drop/enabled: true`，投放判定要靠它的 `/yolo/detections`。没启动时任务照飞，只是 C/D 悬停等满 `wait_timeout`(10 s) 后不投继续。启动命令、话题表、检测 JSON 字段和覆盖参数见 [最简启动文档第 7 步](HYBRID_MISSION_QUICKSTART.md#第-7-步终端-7可选yolo-视觉识别)。
+`yolo_trt_ros` 当前默认使用 USB 相机 + VLM 语义识别 + OpenCV 跟踪，**不订阅也不发布任何飞行指令话题**。任务脚本默认以 `/yolo/recognition` 的新鲜语义结论确认目标；`/yolo/detections` 保留逐帧 CV 框。没启动时 C/D、F/G/H 到点等待 `wait_timeout`（15 s）后不投继续。启动命令见 [最简启动文档第 7 步](HYBRID_MISSION_QUICKSTART.md#第-7-步终端-7可选yolo-视觉识别)，任务逻辑详见混合任务说明中的固定跟踪 3 s 一节。
 
 本手册只补充三条与本手册其余内容相关的约定：
 
-- 它占 GPU 与 3 个推理线程，**不在空中第一次启动**；先在地面跑起来，确认 `/ekf/ekf_odom`、`/Odometry` 频率和 Planner 周期没有下降再决定要不要带着飞。
-- 默认 `show_window:=true`：启动会在桌面弹出 `YOLO TensorRT` 预览窗口（10 FPS）。飞行中不需要看图就用 `show_window:=false` 启动，少占一点 GPU。
-- 第 6 节的录包器话题表固定、不含 YOLO 话题；要留检测结果就另开独立 `rosbag record`（写在 `$FLIGHT_DIR/yolo.bag`），不要改飞行包的录制命令。
+- 它与 VLM 后端共同占用计算资源，**不在空中第一次启动**；先在地面跑起来，确认 `/ekf/ekf_odom`、`/Odometry` 频率和 Planner 周期没有下降再决定要不要带着飞。
+- 默认 `show_window:=true`：启动弹出 `VLM Recognition` 预览窗口；地面启动时可设置 `show_window:=false`，通过 ROS 预览话题观察。
+- 第 6 节录包器已默认包含 `/yolo/enable`、`/yolo/recognition`、`/yolo/detections`；图像仍需另录，避免默认写入高带宽图像。当前 VLM 流程为：语义确认 → CV 跟踪固定 3 s（丢框不重置）→ 下降投放；参数与保护见任务说明中的 `confirmation_source/tracking_seconds`。
 
 参数和状态机细节见 [混合任务说明](HYBRID_PLANNER_PX4CTRL_MISSION.md)；地图细节见 [地图检查](OBSTACLE_MAP_CHECK.md)；历史故障证据见 [文档总入口](README.md)。
+
+## 15. E→F 紧急停止录包复核（2026-11-26）
+
+核对文件：`~/flight_logs/console_19700101_082535/flight_0.bag`，时长约 99.84 s。
+该录包使用了复位后的系统时钟，目录中的 1970 **不是实际飞行日期**；以下均为相对录包开头的秒数。
+不要只按文件修改时间选择最新包。同目录后的 `console_19700101_082616` 是另一个地面预检失败包，
+其中缺少 `/servo/push` 的报错不能当成本次空中降落原因。
+
+| 相对时间 | 证据 |
+| --- | --- |
+| 42.12 s | D 点开始 `DROP_DESCEND`，随后已完成投放阶段和回升 |
+| 70.38 s | E 点悬停结束，任务请求 Planner 飞往 F |
+| 70.43–70.76 s | 24 条速度可行性拒绝：候选轨迹峰值 0.610269–0.660224 m/s，高于接受上限 0.61 m/s；其间还出现 A* 起/终点调整后越出地图的日志 |
+| 70.78 s | `replan fail too much. Emergency stop.`，规划失败计数超过阈值，Planner 发停止/悬停轨迹 |
+| 72.82 s | 任务检测到 Planner 静止指令持续约 2 s，实测距 F 约 1.90 m，终止任务 |
+| 72.87 s | 任务进入 `LANDING` 并发送一次 `TakeoffLand.LAND`（值 2） |
+| 85.70 s | `DONE`；降落用时约 12.8 s |
+
+结论：**这一包的链路是规划连续失败 → Planner 急停 → 任务静止指令看门狗触发 → PX4Ctrl 降落**，
+不是 VLM 丢框直接命令降落。这里的 0.61–0.66 m/s 是被拒绝的候选轨迹速度，不是飞机实测超速；
+事件附近 69–73 s 的 EKF 速度峰值约 0.084 m/s。录制参数为
+`optimization/max_vel=0.24`、`vel_tolerance=0.37`，故接受上限为 0.61。
+
+A* 日志来自占据点向外调整后越界，不能仅凭这句话认定实际 F 点在地图外或被障碍占据。
+紧靠发目标之前的可视化膨胀云中，E/F 到最近体素中心距离约 0.293/0.210 m；
+这也不是对整条通道无碰撞的证明。继续定位应检查优化候选、障碍分布及可行性约束，
+不要直接关闭碰撞检查、急停或无运动保护，也不要未经验证继续放宽速度上限。
+
+这个旧包已包含原始占据图和膨胀图，但**没有 `/yolo/*`**，因此无法从此包还原视觉识别和丢框过程。
+更新后的录包器会记录触发、语义结果和 CV 检测，图像需要时仍单独录制。

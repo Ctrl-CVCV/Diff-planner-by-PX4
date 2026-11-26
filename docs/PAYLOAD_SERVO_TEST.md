@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | 1 | 1 号物资（消防） | `/servo3/push`（MAIN7，500→2500） |
 | 2 | 2 号物资（救援） | `/servo4/push`（MAIN8，500→2500） |
-| 3 | 下放 3/4 号物资 | `/servo1/push` + `/servo2/push`（MAIN5/6，500→1143） |
+| 3 | 下放 3/4 号物资 | `/servo1/push` + `/servo2/push`（MAIN5/6，500→1800） |
 | 4 | 3 号物资（救援） | `/servo3/push` |
 | 5 | 4 号物资（救援） | `/servo4/push` |
 | r | 全部收舵 | `/servo1../servo4/retract` |
