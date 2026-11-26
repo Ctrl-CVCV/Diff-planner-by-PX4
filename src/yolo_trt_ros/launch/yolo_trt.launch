@@ -18,11 +18,12 @@
   <arg name="window_name" default="VLM Recognition"/>
   <arg name="endpoint" default="http://127.0.0.1:8080/v1/chat/completions"/>
   <arg name="model" default="qwen2.5-vl-7b"/>
-  <arg name="hold_seconds" default="4.0"/>
+  <arg name="hold_seconds" default="3.0"/>
   <arg name="window_width" default="640"/>
   <arg name="window_height" default="480"/>
   <arg name="preview_topic" default="/yolo/preview/image"/>
   <arg name="detections_topic" default="/yolo/detections"/>
+  <arg name="recognition_topic" default="/yolo/recognition"/>
   <!--单次触发：std_msgs/Bool。false=识别一次危险品，true=识别一次人像。-->
   <arg name="enable_topic" default="/yolo/enable"/>
   <arg name="enabled_default" default="false"/>
@@ -45,7 +46,7 @@
        /yolo/enable 每来一条消息只识别一次：false=危险标志（C/D 点），true=人像（E/F/G 点）。
        识别类型只由 /yolo/enable 决定，不看边框颜色。
        送给 VLM 的都是外层矩形边框。发布时，标志的矩形与三角形三个角相切，人像圈最外层边框。
-       确认后约 4 秒由 OpenCV 跟随这个输出矩形。
+       确认后约 3 秒由 OpenCV 跟随这个输出矩形；语义结果独立发布到 /yolo/recognition。
        enabled_default 不再自动开始识别；engine_path / label_names 不参与识别。 -->
   <node pkg="yolo_trt_ros" type="vlm_detector_node.py" name="yolo_trt_detector" output="screen"
         if="$(arg use_vlm)">
@@ -55,6 +56,7 @@
     <param name="window_name" value="$(arg window_name)" type="str"/>
     <param name="preview_topic" value="$(arg preview_topic)" type="str"/>
     <param name="detections_topic" value="$(arg detections_topic)" type="str"/>
+    <param name="recognition_topic" value="$(arg recognition_topic)" type="str"/>
     <param name="enable_topic" value="$(arg enable_topic)" type="str"/>
     <param name="endpoint" value="$(arg endpoint)" type="str"/>
     <param name="model" value="$(arg model)" type="str"/>

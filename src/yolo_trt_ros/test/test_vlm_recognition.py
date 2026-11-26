@@ -3,11 +3,24 @@ import unittest
 
 from vlm_recognition import (
     RecognitionHold, disabled_payload, enabled_payload, make_detection,
-    should_call_vlm, yolo_class,
+    recognition_result, should_call_vlm, yolo_class,
 )
 
 
 class VlmRecognitionTests(unittest.TestCase):
+    def test_semantic_result_does_not_require_a_tracking_box(self):
+        for mode, class_id, label in (('sign', 0, '危险品标识'),
+                                      ('portrait', 2, '救助人员')):
+            result = recognition_result(1000.0, mode, class_id, label, 1200.0)
+            self.assertEqual(result['label'], label)
+            self.assertEqual(result['confidence'], 1.0)
+            self.assertNotIn('detections', result)
+            hold = RecognitionHold()
+            hold.start(100.0, mode, class_id, label, 1200.0)
+            self.assertTrue(hold.missed(100.0, grace=0.0))
+            self.assertTrue(hold.running(102.99))
+            self.assertFalse(hold.running(103.0))
+
     def test_labels_match_the_yolo_names_the_mission_searches(self):
         self.assertEqual(yolo_class('sign', '危险标志'), (0, '危险品标识'))
         self.assertEqual(yolo_class('sign', '非危险标志'), (1, '其它标识'))
@@ -54,6 +67,16 @@ class VlmRecognitionTests(unittest.TestCase):
         hold.note_box((10, 10, 40, 40))
         self.assertFalse(hold.missed(100.2))
         self.assertTrue(hold.missed(100.6))
+
+    def test_first_track_can_start_from_the_pre_vlm_box(self):
+        hold = RecognitionHold(4.0)
+        hold.start(100.0, 'portrait', 2, '救助人员', 1800.0, prior=(10, 20, 80, 80))
+        self.assertIsNone(hold.bbox)
+        self.assertEqual(hold.tracking_hint(), (10, 20, 80, 80))
+        hold.note_box((12, 22, 78, 78))
+        self.assertEqual(hold.tracking_hint(), (12, 22, 78, 78))
+        hold.start(110.0, 'sign', 0, '危险品标识', 1800.0)
+        self.assertIsNone(hold.tracking_hint())
 
 
 if __name__ == '__main__':

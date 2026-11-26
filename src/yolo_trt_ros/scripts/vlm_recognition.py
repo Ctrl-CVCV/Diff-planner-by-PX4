@@ -7,7 +7,7 @@ YOLO_CLASSES = {
     '非危险标志': (1, '其它标识'),
     '人物头像': (2, '救助人员'),
 }
-HOLD_SECONDS = 4.0
+HOLD_SECONDS = 3.0
 # The grammar has no probability. A forced label is published as a full score
 # so the mission confidence gate (default 0.70) treats it like a YOLO hit.
 VLM_CONFIDENCE = 1.0
@@ -28,7 +28,7 @@ _DISABLED_KEYS = (
 
 
 class RecognitionHold(object):
-    """Keep one accepted target marked for longer than the required 3 seconds."""
+    """Follow one accepted target for a fixed interval, regardless of box loss."""
 
     def __init__(self, seconds=HOLD_SECONDS):
         if not math.isfinite(seconds) or seconds < 3.0:
@@ -40,11 +40,12 @@ class RecognitionHold(object):
         self.label = None
         self.inference_ms = 0.0
         self.bbox = None
+        self.prior = None
         self.polygon = None
         self.shape = None
         self.miss_since = None
 
-    def start(self, now, mode, class_id, label, inference_ms):
+    def start(self, now, mode, class_id, label, inference_ms, prior=None):
         self.until = float(now) + self.seconds
         self.color = mode
         self.shape = 'triangle' if mode == 'sign' else 'square' if mode == 'portrait' else None
@@ -52,8 +53,15 @@ class RecognitionHold(object):
         self.label = label
         self.inference_ms = float(inference_ms)
         self.bbox = None
+        self.prior = None if prior is None else tuple(int(round(value)) for value in prior)
         self.polygon = None
         self.miss_since = None
+
+    def tracking_hint(self):
+        """Where to look. A box already followed wins over the pre-VLM location."""
+        if self.bbox is not None:
+            return self.bbox
+        return self.prior
 
     def note_box(self, bbox, polygon=None):
         self.bbox = tuple(bbox)
@@ -79,6 +87,7 @@ class RecognitionHold(object):
         self.label = None
         self.inference_ms = 0.0
         self.bbox = None
+        self.prior = None
         self.polygon = None
         self.shape = None
         self.miss_since = None
@@ -101,6 +110,12 @@ def yolo_class(mode, text):
     if mode == 'portrait' and text == '不是人物头像':
         return YOLO_CLASSES['非危险标志']
     return None
+
+
+def recognition_result(stamp, mode, class_id, label, inference_ms):
+    """Publish the semantic decision independently of CV boxes or camera frames."""
+    return dict(stamp=float(stamp), mode=mode, class_id=int(class_id), label=label,
+                confidence=VLM_CONFIDENCE, inference_ms=float(inference_ms))
 
 
 def make_detection(class_id, label, bbox, image_width, image_height,

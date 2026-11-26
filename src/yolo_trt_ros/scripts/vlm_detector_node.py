@@ -6,7 +6,8 @@ false runs one danger-sign recognition. true runs one portrait recognition.
 That message alone chooses the VLM question. Border color is not consulted.
 The crop sent to the VLM is the outer rectangular frame. The published sign box
 is the rectangle tangent to the triangle's three corners. A portrait keeps its
-outermost frame. Either box is followed for about 4 seconds.
+outermost frame. Either box is followed for 3 seconds. /yolo/recognition publishes
+the semantic result immediately, even if no CV box is found afterwards.
 非危险标志 and 不是人物头像 are published as class 1, 其它标识; class 1 keeps its
 JSON but is not boxed or labelled in the preview. The JSON on /yolo/detections
 uses the original YOLO fields.
@@ -30,7 +31,7 @@ from vlm_client import VisionError, classify_frame
 from vlm_track import follow_target, recognition_crop
 from vlm_recognition import (
     RecognitionHold, disabled_payload, enabled_payload, make_detection,
-    should_call_vlm, yolo_class,
+    recognition_result, should_call_vlm, yolo_class,
 )
 
 # 方框和文字颜色（BGR）：危险品红、救助人员蓝、其它标识橙。
@@ -60,6 +61,7 @@ class VlmDetectorNode(object):
         self.image_topic = rospy.get_param('~image_topic', '/usb_cam/image_raw')
         self.preview_topic = rospy.get_param('~preview_topic', '/yolo/preview/image')
         self.detections_topic = rospy.get_param('~detections_topic', '/yolo/detections')
+        self.recognition_topic = rospy.get_param('~recognition_topic', '/yolo/recognition')
         self.enable_topic = str(rospy.get_param('~enable_topic', '/yolo/enable'))
         self.endpoint = rospy.get_param(
             '~endpoint', 'http://127.0.0.1:8080/v1/chat/completions')
@@ -68,7 +70,7 @@ class VlmDetectorNode(object):
         self.max_image_side = int(rospy.get_param('~max_image_side', 640))
         self.display = bool(rospy.get_param('~show_window', True))
         self.window_name = str(rospy.get_param('~window_name', 'VLM Recognition'))
-        self.hold = RecognitionHold(float(rospy.get_param('~hold_seconds', 4.0)))
+        self.hold = RecognitionHold(float(rospy.get_param('~hold_seconds', 3.0)))
         if self.display and not os.environ.get('DISPLAY'):
             rospy.logwarn('show_window is set but DISPLAY is empty; preview window disabled')
             self.display = False
@@ -86,12 +88,14 @@ class VlmDetectorNode(object):
         self._pending = None
         self._active = False
         self._generation = 0
+        self._track_prior = None
         self._last_publish = 0.0
         self._published = 0
         self._publish_mark = time.monotonic()
         self.processed_fps = 0.0
         self.preview_pub = rospy.Publisher(self.preview_topic, Image, queue_size=1)
         self.detections_pub = rospy.Publisher(self.detections_topic, String, queue_size=1)
+        self.recognition_pub = rospy.Publisher(self.recognition_topic, String, queue_size=10)
         self.image_sub = rospy.Subscriber(
             self.image_topic, Image, self._on_image, queue_size=1,
             buff_size=16 * 1024 * 1024)
@@ -108,6 +112,7 @@ class VlmDetectorNode(object):
             self._generation += 1
             self._pending = mode
             self._active = True
+            self._track_prior = None
             self.hold.clear()
         rospy.logwarn('单次识别触发：%s（%s=%s）',
                       '人像' if mode == 'portrait' else '危险品',
@@ -151,7 +156,10 @@ class VlmDetectorNode(object):
             if crop is None:
                 rospy.loginfo_throttle(2.0, '等待画面中的外层矩形边框后再请求 VLM')
             else:
-                self._start_inference(crop['image'], pending)
+                if crop.get('full_frame'):
+                    rospy.loginfo('外框只有三条边，整幅画面送入 VLM')
+                self._start_inference(crop['image'], pending,
+                                      crop.get('track_bbox') or crop['bbox'])
         with self.lock:
             if not self.hold.running(now) and not self.busy and self._pending is None:
                 self._active = False
@@ -180,7 +188,7 @@ class VlmDetectorNode(object):
             camera_fps, processed_fps)
         self._publish_json(payload)
 
-    def _start_inference(self, frame, mode):
+    def _start_inference(self, frame, mode, track_bbox):
         with self.lock:
             if not should_call_vlm(
                     self._pending, self.busy, self.hold.running(time.monotonic())):
@@ -189,6 +197,7 @@ class VlmDetectorNode(object):
                 return
             self.busy = True
             self._pending = None
+            self._track_prior = tuple(int(round(value)) for value in track_bbox)
             generation = self._generation
         snapshot = frame.copy()
         worker = threading.Thread(
@@ -201,7 +210,7 @@ class VlmDetectorNode(object):
         tracked = None
         if hold.shape in ('triangle', 'square'):
             try:
-                tracked = follow_target(frame, hold.shape, hold.bbox)
+                tracked = follow_target(frame, hold.shape, hold.tracking_hint())
             except (ValueError, cv2.error) as exc:
                 rospy.logwarn_throttle(5.0, 'target tracking failed: %s', exc)
         if tracked is not None:
@@ -232,11 +241,16 @@ class VlmDetectorNode(object):
             if generation != self._generation:
                 return
             if mapped is None:
+                self._track_prior = None
                 self._active = False
                 rospy.loginfo('本次触发未确认目标，不再重复识别')
                 return
             class_id, label = mapped
-            self.hold.start(time.monotonic(), mode, class_id, label, elapsed_ms)
+            prior = self._track_prior
+            self._track_prior = None
+            self.hold.start(time.monotonic(), mode, class_id, label, elapsed_ms, prior)
+            result = recognition_result(rospy.Time.now().to_sec(), mode, class_id, label, elapsed_ms)
+            self.recognition_pub.publish(String(data=json.dumps(result, ensure_ascii=False)))
             rospy.loginfo('已确认%s，之后 %.1f 秒跟随%s', label, self.hold.seconds,
                           '与三角形相切的矩形' if self.hold.shape == 'triangle' else '最外层边框')
 
